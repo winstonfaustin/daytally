@@ -1,0 +1,24 @@
+[
+  {
+    "id": "white_restaurant_two_person",
+    "description": "Manual ground truth for calculator testing. Singapore receipt with proportional GST and service charge.",
+    "input_note": "Receipt image plus voice or typed instructions naming Winston and Hanzel.",
+    "expected_currency": "SGD",
+    "expected_participants": ["Winston", "Hanzel"],
+    "receipt_summary": {
+      "subtotal": 49.20,
+      "tax": 3.79,
+      "tip": 4.92,
+      "grand_total": 57.91
+    },
+    "participant_food_totals": {
+      "Winston": 15.80,
+      "Hanzel": 33.40
+    },
+    "expected_after_calculator": {
+      "Winston": {"tax_and_tip_share": 2.80, "total_owed": 18.60},
+      "Hanzel": {"tax_and_tip_share": 5.91, "total_owed": 39.31}
+    },
+    "tolerance": 0.01
+  }
+]

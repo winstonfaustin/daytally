@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DayTally — Split Bills, Track Life</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">📅</span>
+        <div>
+          <h1>DayTally</h1>
+          <p class="tagline">Your student life copilot</p>
+        </div>
+      </div>
+      <nav class="header-nav">
+        <button type="button" class="nav-btn active" id="nav-new" data-view="new">New split</button>
+        <button type="button" class="nav-btn" id="nav-history" data-view="history">History</button>
+      </nav>
+    </header>
+
+    <!-- New split flow -->
+    <main class="main" id="view-new">
+      <section class="hero card">
+        <h2>Split a bill in seconds</h2>
+        <p>Snap your receipt, record who had what, and DayTally does the math.</p>
+      </section>
+
+      <div class="wizard-steps" id="wizard-steps">
+        <div class="wizard-step active" data-step="1">
+          <span class="step-num">1</span>
+          <span class="step-label">Receipt</span>
+        </div>
+        <div class="wizard-step" data-step="2">
+          <span class="step-num">2</span>
+          <span class="step-label">Voice</span>
+        </div>
+        <div class="wizard-step" data-step="3">
+          <span class="step-num">3</span>
+          <span class="step-label">Review</span>
+        </div>
+        <div class="wizard-step" data-step="4">
+          <span class="step-num">4</span>
+          <span class="step-label">Done</span>
+        </div>
+      </div>
+
+      <!-- Step 1: Receipt -->
+      <section class="card wizard-panel" id="step-receipt">
+        <h3 class="panel-title">Snap your receipt</h3>
+        <p class="panel-desc">Take a photo or upload an image of the bill.</p>
+
+        <div class="dropzone dropzone-large" id="receipt-dropzone" tabindex="0">
+          <input type="file" id="receipt" accept="image/*" capture="environment">
+          <div class="dropzone-content" id="receipt-placeholder">
+            <span class="dropzone-icon">🧾</span>
+            <p class="dropzone-title">Tap to take photo or upload</p>
+            <p class="dropzone-hint">PNG, JPG, WEBP</p>
+          </div>
+          <img class="receipt-preview hidden" id="receipt-preview" alt="Receipt preview">
+        </div>
+        <p class="file-name" id="receipt-name"></p>
+
+        <button type="button" class="btn-primary" id="btn-to-voice" disabled>Continue</button>
+      </section>
+
+      <!-- Step 2: Voice -->
+      <section class="card wizard-panel hidden" id="step-voice">
+        <h3 class="panel-title">Say who had what</h3>
+        <p class="panel-desc">Hold the button and describe the split — event name, who ate what, and who shares items.</p>
+
+        <div class="recorder">
+          <button type="button" class="record-btn" id="record-btn" aria-label="Hold to record">
+            <span class="record-icon" id="record-icon">🎙️</span>
+            <span class="record-label" id="record-label">Hold to record</span>
+          </button>
+          <p class="record-timer" id="record-timer">0:00</p>
+          <div class="record-wave hidden" id="record-wave">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <div class="audio-preview hidden" id="audio-preview">
+          <p class="preview-label">Recording ready</p>
+          <audio controls id="audio-playback"></audio>
+          <button type="button" class="btn-text" id="btn-rerecord">Re-record</button>
+        </div>
+
+        <details class="text-fallback">
+          <summary>Or type it instead</summary>
+          <textarea id="voice-text-fallback" rows="4" placeholder="e.g. Dinner at White Restaurant on 23 October. Me and Hanzel. I had the omelette, he had the beef..."></textarea>
+        </details>
+
+        <div class="btn-row">
+          <button type="button" class="btn-secondary" id="btn-back-receipt">Back</button>
+          <button type="button" class="btn-primary" id="btn-process" disabled>
+            <span class="btn-label">Calculate split</span>
+            <span class="spinner hidden" id="spinner"></span>
+          </button>
+        </div>
+
+        <div class="processing-steps hidden" id="processing-steps">
+          <div class="proc-step active" data-proc="split">
+            <span class="proc-dot"></span>
+            <span>Analyzing receipt & voice…</span>
+          </div>
+        </div>
+
+        <div class="error-banner hidden" id="error-banner" role="alert"></div>
+      </section>
+
+      <!-- Step 3: Review & edit -->
+      <section class="card wizard-panel hidden" id="step-review">
+        <h3 class="panel-title">Review before confirming</h3>
+        <p class="panel-desc">Check GST, service charge, and item assignments. Tax and service are split automatically by what each person ordered.</p>
+
+        <details class="extracted-sources">
+          <summary>What DayTally read from your uploads</summary>
+          <div class="extracted-block">
+            <p class="extracted-label">Receipt text</p>
+            <pre id="extracted-receipt"></pre>
+          </div>
+          <div class="extracted-block">
+            <p class="extracted-label">Voice transcript</p>
+            <pre id="extracted-voice"></pre>
+          </div>
+        </details>
+
+        <div class="edit-event">
+          <div class="edit-field">
+            <label for="edit-title">Event</label>
+            <input type="text" id="edit-title">
+          </div>
+          <div class="edit-row">
+            <div class="edit-field">
+              <label for="edit-date">Date</label>
+              <input type="text" id="edit-date">
+            </div>
+            <div class="edit-field">
+              <label for="edit-currency">Currency</label>
+              <select id="edit-currency">
+                <option value="SGD">SGD</option>
+                <option value="IDR">IDR</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="receipt-summary-edit" id="review-summary">
+          <div class="edit-field">
+            <label for="edit-subtotal">Subtotal (from items)</label>
+            <input type="text" id="edit-subtotal" readonly>
+          </div>
+          <div class="edit-field">
+            <label for="edit-gst-percent">GST (%)</label>
+            <input type="number" id="edit-gst-percent" step="0.01" min="0">
+            <span class="field-amount" id="edit-tax-amount"></span>
+          </div>
+          <div class="edit-field">
+            <label for="edit-svc-percent">Service charge (%)</label>
+            <input type="number" id="edit-svc-percent" step="0.01" min="0">
+            <span class="field-amount" id="edit-tip-amount"></span>
+          </div>
+          <div class="edit-field">
+            <label for="edit-grand-total">Grand total</label>
+            <input type="text" id="edit-grand-total" readonly>
+          </div>
+        </div>
+        <p class="split-note">Adjust GST % and service charge % — amounts update automatically and split proportionally by what each person ordered.</p>
+        <div class="edit-participants" id="edit-participants"></div>
+
+        <div class="btn-row">
+          <button type="button" class="btn-secondary" id="btn-back-voice">Back</button>
+          <button type="button" class="btn-primary" id="btn-confirm">Confirm split</button>
+        </div>
+      </section>
+
+      <!-- Step 4: Results -->
+      <section class="wizard-panel hidden" id="step-results">
+        <div class="event-card card">
+          <div class="event-header">
+            <div>
+              <p class="eyebrow">Event</p>
+              <h2 id="event-title">—</h2>
+              <p class="event-meta">
+                <span id="event-date">—</span>
+                <span class="dot">·</span>
+                <span id="event-currency">—</span>
+              </p>
+            </div>
+            <div class="grand-total-badge">
+              <span class="label">Grand total</span>
+              <span class="amount" id="grand-total">—</span>
+            </div>
+          </div>
+
+          <div class="receipt-summary">
+            <div class="summary-item">
+              <span>Subtotal</span>
+              <span id="subtotal">—</span>
+            </div>
+            <div class="summary-item">
+              <span id="tax-label">GST</span>
+              <span id="tax">—</span>
+            </div>
+            <div class="summary-item">
+              <span id="tip-label">Service charge</span>
+              <span id="tip">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="share-bar card">
+          <h3 class="section-title">Share with the group</h3>
+          <div class="share-buttons">
+            <button type="button" class="btn-secondary" id="btn-copy-all">Copy full summary</button>
+            <button type="button" class="btn-secondary" id="btn-share-native">Share…</button>
+          </div>
+          <p class="share-toast hidden" id="share-toast">Copied to clipboard!</p>
+        </div>
+
+        <h3 class="section-title">Who owes what</h3>
+        <div class="participants-grid" id="participants-grid"></div>
+
+        <button type="button" class="btn-primary btn-new-split" id="btn-new-split">Start new split</button>
+      </section>
+    </main>
+
+    <!-- History view -->
+    <main class="main hidden" id="view-history">
+      <section class="card">
+        <h3 class="panel-title">Past splits</h3>
+        <p class="panel-desc">Your recent bill splits saved on this device.</p>
+        <div class="history-list" id="history-list"></div>
+        <p class="history-empty hidden" id="history-empty">No splits yet. Create your first one!</p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DayTally prototype · Expenses · Bill splits · Social planning</p>
+    </footer>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
