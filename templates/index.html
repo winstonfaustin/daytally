@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DayTally — Split Bills, Track Life</title>
+  <title>DayTally · Split Bills, Track Life</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
@@ -73,7 +73,7 @@
       <!-- Step 2: Voice -->
       <section class="card wizard-panel hidden" id="step-voice">
         <h3 class="panel-title">Say who had what</h3>
-        <p class="panel-desc">Hold the button and describe the split — event name, who ate what, and who shares items.</p>
+        <p class="panel-desc">Hold the button and describe the split. Include the event name, who ate what, and who shares items.</p>
 
         <div class="recorder">
           <button type="button" class="record-btn" id="record-btn" aria-label="Hold to record">
@@ -94,7 +94,7 @@
 
         <details class="text-fallback">
           <summary>Or type it instead</summary>
-          <textarea id="voice-text-fallback" rows="4" placeholder="e.g. Dinner at White Restaurant on 23 October. Me and Hanzel. I had the omelette, he had the beef..."></textarea>
+          <textarea id="voice-text-fallback" rows="4" placeholder="e.g. Dinner at Sanook Kitchen. Mevan had the chicken and rice. Winston had the pineapple fried rice. Albert had the honey chicken rice. We all shared the beef."></textarea>
         </details>
 
         <div class="btn-row">
@@ -108,7 +108,7 @@
         <div class="processing-steps hidden" id="processing-steps">
           <div class="proc-step active" data-proc="split">
             <span class="proc-dot"></span>
-            <span>Analyzing receipt & voice…</span>
+            <span>Analyzing your receipt…</span>
           </div>
         </div>
 
@@ -118,19 +118,7 @@
       <!-- Step 3: Review & edit -->
       <section class="card wizard-panel hidden" id="step-review">
         <h3 class="panel-title">Review before confirming</h3>
-        <p class="panel-desc">Check GST, service charge, and item assignments. Tax and service are split automatically by what each person ordered.</p>
-
-        <details class="extracted-sources">
-          <summary>What DayTally read from your uploads</summary>
-          <div class="extracted-block">
-            <p class="extracted-label">Receipt text</p>
-            <pre id="extracted-receipt"></pre>
-          </div>
-          <div class="extracted-block">
-            <p class="extracted-label">Voice transcript</p>
-            <pre id="extracted-voice"></pre>
-          </div>
-        </details>
+        <p class="panel-desc">Check the details below. Who ordered what, GST, service charge, and each person's share are listed for you to edit before you confirm.</p>
 
         <div class="edit-event">
           <div class="edit-field">
@@ -154,7 +142,7 @@
 
         <div class="receipt-summary-edit" id="review-summary">
           <div class="edit-field">
-            <label for="edit-subtotal">Subtotal (from items)</label>
+            <label for="edit-subtotal">Subtotal</label>
             <input type="text" id="edit-subtotal" readonly>
           </div>
           <div class="edit-field">
@@ -172,7 +160,7 @@
             <input type="text" id="edit-grand-total" readonly>
           </div>
         </div>
-        <p class="split-note">Adjust GST % and service charge % — amounts update automatically and split proportionally by what each person ordered.</p>
+        <p class="split-note">GST and service charge are split fairly based on what each person ordered. Change the percentages above to adjust.</p>
         <div class="edit-participants" id="edit-participants"></div>
 
         <div class="btn-row">
@@ -187,31 +175,31 @@
           <div class="event-header">
             <div>
               <p class="eyebrow">Event</p>
-              <h2 id="event-title">—</h2>
+              <h2 id="event-title">-</h2>
               <p class="event-meta">
-                <span id="event-date">—</span>
+                <span id="event-date">-</span>
                 <span class="dot">·</span>
-                <span id="event-currency">—</span>
+                <span id="event-currency">-</span>
               </p>
             </div>
             <div class="grand-total-badge">
               <span class="label">Grand total</span>
-              <span class="amount" id="grand-total">—</span>
+              <span class="amount" id="grand-total">-</span>
             </div>
           </div>
 
           <div class="receipt-summary">
             <div class="summary-item">
               <span>Subtotal</span>
-              <span id="subtotal">—</span>
+              <span id="subtotal">-</span>
             </div>
             <div class="summary-item">
               <span id="tax-label">GST</span>
-              <span id="tax">—</span>
+              <span id="tax">-</span>
             </div>
             <div class="summary-item">
               <span id="tip-label">Service charge</span>
-              <span id="tip">—</span>
+              <span id="tip">-</span>
             </div>
           </div>
         </div>
@@ -243,7 +231,7 @@
     </main>
 
     <footer class="footer">
-      <p>DayTally prototype · Expenses · Bill splits · Social planning</p>
+      <p>DayTally · Split bills · Track expenses · Plan together</p>
     </footer>
   </div>
 

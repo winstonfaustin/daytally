@@ -5,8 +5,6 @@ const state = {
   audioBlob: null,
   draftData: null,
   confirmedData: null,
-  extractedReceipt: "",
-  extractedVoice: "",
   gstPercent: 0,
   svcPercent: 0,
 };
@@ -58,8 +56,6 @@ const editSvcPercent = document.getElementById("edit-svc-percent");
 const editTaxAmount = document.getElementById("edit-tax-amount");
 const editTipAmount = document.getElementById("edit-tip-amount");
 const editGrandTotal = document.getElementById("edit-grand-total");
-const extractedReceipt = document.getElementById("extracted-receipt");
-const extractedVoice = document.getElementById("extracted-voice");
 const reviewSummary = document.getElementById("review-summary");
 const editParticipants = document.getElementById("edit-participants");
 const btnBackVoice = document.getElementById("btn-back-voice");
@@ -86,7 +82,7 @@ function round2(n) {
 
 function formatMoney(amount, currency) {
   const value = Number(amount);
-  if (Number.isNaN(value)) return "—";
+  if (Number.isNaN(value)) return "-";
 
   if (currency === "IDR") {
     return new Intl.NumberFormat("id-ID", {
@@ -335,8 +331,6 @@ btnProcess.addEventListener("click", async () => {
 
     setProcStep("split", "done");
     state.draftData = payload.data;
-    state.extractedReceipt = payload.debug?.receipt_text || "";
-    state.extractedVoice = payload.debug?.voice_transcript || "";
     syncPercentFromAmounts(state.draftData);
     renderReview(state.draftData);
     setWizardStep(3);
@@ -390,12 +384,31 @@ function recalcFromPercentages(data) {
   recalcProportionalTaxTip(data);
 }
 
+function allocatePool(pool, weights) {
+  if (!weights.length) return [];
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  if (weightSum <= 0) {
+    const even = round2(pool / weights.length);
+    const shares = weights.map(() => even);
+    shares[shares.length - 1] = round2(pool - even * (weights.length - 1));
+    return shares;
+  }
+  let assigned = 0;
+  return weights.map((weight, index) => {
+    if (index === weights.length - 1) {
+      return round2(pool - assigned);
+    }
+    const share = round2((pool * weight) / weightSum);
+    assigned += share;
+    return share;
+  });
+}
+
 function recalcProportionalTaxTip(data) {
   const participants = data.participants;
   const summary = data.receipt_summary;
   const tax = Number(summary.tax) || 0;
   const tip = Number(summary.tip) || 0;
-  const totalTaxTip = tax + tip;
 
   const itemTotals = participants.map(participantItemsTotal);
   const itemsSubtotal = round2(itemTotals.reduce((a, b) => a + b, 0));
@@ -406,29 +419,21 @@ function recalcProportionalTaxTip(data) {
   if (!participants.length) return;
 
   if (itemsSubtotal <= 0) {
-    let assigned = 0;
-    const evenShare = round2(totalTaxTip / participants.length);
+    const serviceShares = allocatePool(tip, itemTotals);
+    const gstShares = allocatePool(tax, itemTotals);
     participants.forEach((person, index) => {
-      if (index === participants.length - 1) {
-        person.tax_and_tip_share = round2(totalTaxTip - assigned);
-      } else {
-        person.tax_and_tip_share = evenShare;
-        assigned += evenShare;
-      }
+      person.tax_and_tip_share = round2(serviceShares[index] + gstShares[index]);
       recalcParticipant(person);
     });
     return;
   }
 
-  let assigned = 0;
+  const serviceShares = allocatePool(tip, itemTotals);
+  const gstBases = itemTotals.map((food, index) => food + serviceShares[index]);
+  const gstShares = allocatePool(tax, gstBases);
+
   participants.forEach((person, index) => {
-    if (index === participants.length - 1) {
-      person.tax_and_tip_share = round2(totalTaxTip - assigned);
-    } else {
-      const share = round2(totalTaxTip * (itemTotals[index] / itemsSubtotal));
-      person.tax_and_tip_share = share;
-      assigned += share;
-    }
+    person.tax_and_tip_share = round2(serviceShares[index] + gstShares[index]);
     recalcParticipant(person);
   });
 }
@@ -461,9 +466,6 @@ function renderReview(data, { skipTaxRecalc = false, keepPercent = false } = {})
   editCurrency.value = data.event_details.currency;
   updateReviewSummaryFields(data);
 
-  if (extractedReceipt) extractedReceipt.textContent = state.extractedReceipt || "—";
-  if (extractedVoice) extractedVoice.textContent = state.extractedVoice || "—";
-
   editParticipants.innerHTML = "";
   data.participants.forEach((person, pIdx) => {
     editParticipants.appendChild(buildEditParticipantCard(data, person, pIdx));
@@ -493,7 +495,7 @@ function buildEditParticipantCard(data, person, pIdx) {
     </div>
     <div class="edit-items">${itemsHtml}</div>
     <div class="edit-participant-footer">
-      <label class="auto-split-label">Tax & service share <span class="auto-tag">auto</span>
+      <label class="auto-split-label">Tax & service share
         <input type="number" class="edit-tax-share" value="${person.tax_and_tip_share}" step="0.01" min="0" data-p="${pIdx}">
       </label>
       <button type="button" class="btn-text btn-add-item" data-p="${pIdx}">+ Add item</button>
@@ -647,7 +649,7 @@ function renderResults(data) {
       <ul class="items-list">${itemsHtml}</ul>
       <div class="participant-card-bottom">
         <div class="participant-footer">
-          <span>Tax & tip share</span>
+          <span>Tax & service</span>
           <strong>${formatMoney(person.tax_and_tip_share, currency)}</strong>
         </div>
         <button type="button" class="btn-text btn-copy-person">Copy for ${escapeHtml(person.name)}</button>
@@ -666,7 +668,7 @@ function renderResults(data) {
 function buildSummaryText(data) {
   const { event_details: event, receipt_summary: summary, participants } = data;
   const c = event.currency;
-  let text = `DayTally — ${event.title}\n${event.date}\n\n`;
+  let text = `DayTally: ${event.title}\n${event.date}\n\n`;
   text += `Grand total: ${formatMoney(summary.grand_total, c)}\n\n`;
   text += `Who owes what:\n`;
   participants.forEach((p) => {
@@ -674,7 +676,7 @@ function buildSummaryText(data) {
     p.items_consumed.forEach((item) => {
       text += `  - ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
     });
-    text += `  (tax/tip: ${formatMoney(p.tax_and_tip_share, c)})\n`;
+    text += `  (tax & service: ${formatMoney(p.tax_and_tip_share, c)})\n`;
   });
   return text.trim();
 }
@@ -685,7 +687,7 @@ function buildPersonMessage(data, person) {
   person.items_consumed.forEach((item) => {
     text += `• ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
   });
-  text += `• Tax & tip share: ${formatMoney(person.tax_and_tip_share, c)}`;
+  text += `• Tax & service: ${formatMoney(person.tax_and_tip_share, c)}`;
   return text;
 }
 
@@ -694,7 +696,7 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     showToast("Copied to clipboard!");
   } catch {
-    showToast("Could not copy — try again.");
+    showToast("Could not copy. Try again.");
   }
 }
 
@@ -714,7 +716,7 @@ btnShareNative.addEventListener("click", async () => {
   if (navigator.share) {
     try {
       await navigator.share({
-        title: `DayTally — ${state.confirmedData.event_details.title}`,
+        title: `DayTally: ${state.confirmedData.event_details.title}`,
         text,
       });
     } catch {

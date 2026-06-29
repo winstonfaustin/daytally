@@ -42,16 +42,14 @@ def split_bill_from_uploads(
         types.Part.from_bytes(data=receipt.read_bytes(), mime_type=image_mime),
     ]
 
-    debug: dict = {"receipt_text": "(read directly from receipt image)"}
-
     if voice_text:
         contents.append(f"Voice instructions (typed):\n{voice_text}")
-        debug["voice_transcript"] = voice_text
+        input_mode = "typed_text"
     elif audio_path:
         audio = Path(audio_path)
         audio_mime = AUDIO_MIME_TYPES.get(audio.suffix.lower(), "audio/webm")
         contents.append(types.Part.from_bytes(data=audio.read_bytes(), mime_type=audio_mime))
-        debug["voice_transcript"] = "(understood from voice note audio)"
+        input_mode = "voice"
     else:
         raise ValueError("Voice instructions are required.")
 
@@ -69,4 +67,8 @@ def split_bill_from_uploads(
     )
 
     result = recalc_proportional_tax_tip(_parse_response(response))
+    debug = {
+        "input_mode": input_mode,
+        "model": DEFAULT_MODEL,
+    }
     return result, debug

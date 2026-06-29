@@ -5,54 +5,60 @@ import unittest
 from services.bill_calculator import recalc_proportional_tax_tip
 
 
-def _base_participants():
+def _sanook_participants():
     return [
         {
-            "name": "Winston",
-            "items_consumed": [{"item_name": "items", "item_cost": 15.80}],
+            "name": "Mevan",
+            "items_consumed": [{"item_name": "items", "item_cost": 14.60}],
             "tax_and_tip_share": 0,
             "total_owed": 0,
         },
         {
-            "name": "Hanzel",
-            "items_consumed": [{"item_name": "items", "item_cost": 33.40}],
+            "name": "Winston",
+            "items_consumed": [{"item_name": "items", "item_cost": 11.20}],
+            "tax_and_tip_share": 0,
+            "total_owed": 0,
+        },
+        {
+            "name": "Albert",
+            "items_consumed": [{"item_name": "items", "item_cost": 11.20}],
             "tax_and_tip_share": 0,
             "total_owed": 0,
         },
     ]
 
 
+def _sanook_summary():
+    return {
+        "subtotal": 37.00,
+        "tax": 3.66,
+        "tip": 3.70,
+        "grand_total": 44.36,
+    }
+
+
 class BillCalculatorTests(unittest.TestCase):
-  def test_white_restaurant_proportional_split(self):
-    """Ground truth from informal White Restaurant receipt evaluation."""
+  def test_sanook_kitchen_proportional_split(self):
+    """Ground truth from Sanook Kitchen receipt with proportional GST and service charge."""
     data = {
-      "receipt_summary": {
-        "subtotal": 49.20,
-        "tax": 3.79,
-        "tip": 4.92,
-        "grand_total": 57.91,
-      },
-      "participants": _base_participants(),
+      "receipt_summary": _sanook_summary(),
+      "participants": _sanook_participants(),
     }
     result = recalc_proportional_tax_tip(data)
-    winston = result["participants"][0]
-    hanzel = result["participants"][1]
+    by_name = {p["name"]: p for p in result["participants"]}
 
-    self.assertEqual(winston["tax_and_tip_share"], 2.80)
-    self.assertEqual(winston["total_owed"], 18.60)
-    self.assertEqual(hanzel["tax_and_tip_share"], 5.91)
-    self.assertEqual(hanzel["total_owed"], 39.31)
-    self.assertEqual(result["receipt_summary"]["grand_total"], 57.91)
+    self.assertEqual(by_name["Mevan"]["tax_and_tip_share"], 2.90)
+    self.assertEqual(by_name["Mevan"]["total_owed"], 17.50)
+    self.assertEqual(by_name["Winston"]["tax_and_tip_share"], 2.23)
+    self.assertEqual(by_name["Winston"]["total_owed"], 13.43)
+    self.assertEqual(by_name["Albert"]["tax_and_tip_share"], 2.23)
+    self.assertEqual(by_name["Albert"]["total_owed"], 13.43)
+    self.assertEqual(result["receipt_summary"]["grand_total"], 44.36)
 
   def test_participant_totals_sum_to_grand_total(self):
     data = {
-      "receipt_summary": {
-        "subtotal": 49.20,
-        "tax": 3.79,
-        "tip": 4.92,
-        "grand_total": 57.91,
-      },
-      "participants": _base_participants(),
+      "receipt_summary": _sanook_summary(),
+      "participants": _sanook_participants(),
     }
     result = recalc_proportional_tax_tip(data)
     owed_sum = sum(p["total_owed"] for p in result["participants"])

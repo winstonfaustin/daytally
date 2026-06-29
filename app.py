@@ -11,8 +11,9 @@ from services.gemini_service import split_bill_from_uploads
 load_dotenv(override=True)
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Vercel serverless allows writes only under /tmp
+UPLOAD_DIR = Path("/tmp/daytally_uploads") if os.getenv("VERCEL") else BASE_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_RECEIPT_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "m4a", "webm", "ogg", "aac"}
@@ -95,25 +96,13 @@ def process_bill():
         message = str(exc)
         if "API_KEY_INVALID" in message or "API key not valid" in message:
             return jsonify(
-                {
-                    "error": (
-                        "Your Gemini API key is invalid. "
-                        "Get a new key at https://aistudio.google.com/apikey, "
-                        "paste it into daytally/.env as GEMINI_API_KEY=..., save the file, "
-                        "then restart the server."
-                    )
-                }
+                {"error": "We couldn't process this bill right now. Please try again later."}
             ), 500
         if "no longer available" in message or ("404" in message and "model" in message.lower()):
             return jsonify(
-                {
-                    "error": (
-                        "The Gemini model is unavailable. "
-                        "Set GEMINI_MODEL=gemini-2.5-flash in daytally/.env and restart the server."
-                    )
-                }
+                {"error": "Bill processing is temporarily unavailable. Please try again later."}
             ), 500
-        return jsonify({"error": f"Failed to process bill: {message}"}), 500
+        return jsonify({"error": "Something went wrong while processing your bill. Please try again."}), 500
     finally:
         for path in (receipt_path, audio_path):
             if path and path.exists():

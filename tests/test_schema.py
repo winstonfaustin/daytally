@@ -9,28 +9,34 @@ from models.schema import BillSplitResult
 
 VALID_PAYLOAD = {
   "event_details": {
-    "title": "White Restaurant",
-    "date": "June 2026",
+    "title": "Sanook Kitchen",
+    "date": "23/06/2026",
     "currency": "SGD",
   },
   "receipt_summary": {
-    "subtotal": 49.20,
-    "tax": 3.79,
-    "tip": 4.92,
-    "grand_total": 57.91,
+    "subtotal": 37.00,
+    "tax": 3.66,
+    "tip": 3.70,
+    "grand_total": 44.36,
   },
   "participants": [
     {
-      "name": "Winston",
-      "items_consumed": [{"item_name": "Dish A", "item_cost": 15.80}],
-      "tax_and_tip_share": 2.80,
-      "total_owed": 18.60,
+      "name": "Mevan",
+      "items_consumed": [{"item_name": "Deep-fried Chicken with Thai Herb", "item_cost": 8.90}],
+      "tax_and_tip_share": 2.90,
+      "total_owed": 17.50,
     },
     {
-      "name": "Hanzel",
-      "items_consumed": [{"item_name": "Dish B", "item_cost": 33.40}],
-      "tax_and_tip_share": 5.91,
-      "total_owed": 39.31,
+      "name": "Winston",
+      "items_consumed": [{"item_name": "Pineapple Fried Rice with Prawn", "item_cost": 7.90}],
+      "tax_and_tip_share": 2.23,
+      "total_owed": 13.43,
+    },
+    {
+      "name": "Albert",
+      "items_consumed": [{"item_name": "Honey Chicken Rice", "item_cost": 7.90}],
+      "tax_and_tip_share": 2.23,
+      "total_owed": 13.43,
     },
   ],
 }
@@ -40,7 +46,7 @@ class SchemaTests(unittest.TestCase):
   def test_valid_payload_parses(self):
     result = BillSplitResult.model_validate(VALID_PAYLOAD)
     self.assertEqual(result.event_details.currency, "SGD")
-    self.assertEqual(len(result.participants), 2)
+    self.assertEqual(len(result.participants), 3)
 
   def test_missing_participants_rejected(self):
     bad = dict(VALID_PAYLOAD)

@@ -1,23 +1,25 @@
 [
   {
-    "id": "white_restaurant_two_person",
-    "description": "Manual ground truth for calculator testing. Singapore receipt with proportional GST and service charge.",
-    "input_note": "Receipt image plus voice or typed instructions naming Winston and Hanzel.",
+    "id": "sanook_kitchen_three_person",
+    "description": "Manual ground truth for calculator testing. Sanook Kitchen receipt with three participants and shared beef item.",
+    "input_note": "Receipt image plus typed instructions naming Mevan, Winston and Albert.",
     "expected_currency": "SGD",
-    "expected_participants": ["Winston", "Hanzel"],
+    "expected_participants": ["Mevan", "Winston", "Albert"],
     "receipt_summary": {
-      "subtotal": 49.20,
-      "tax": 3.79,
-      "tip": 4.92,
-      "grand_total": 57.91
+      "subtotal": 37.00,
+      "tax": 3.66,
+      "tip": 3.70,
+      "grand_total": 44.36
     },
     "participant_food_totals": {
-      "Winston": 15.80,
-      "Hanzel": 33.40
+      "Mevan": 14.60,
+      "Winston": 11.20,
+      "Albert": 11.20
     },
     "expected_after_calculator": {
-      "Winston": {"tax_and_tip_share": 2.80, "total_owed": 18.60},
-      "Hanzel": {"tax_and_tip_share": 5.91, "total_owed": 39.31}
+      "Mevan": {"tax_and_tip_share": 2.90, "total_owed": 17.50},
+      "Winston": {"tax_and_tip_share": 2.23, "total_owed": 13.43},
+      "Albert": {"tax_and_tip_share": 2.23, "total_owed": 13.43}
     },
     "tolerance": 0.01
   }
