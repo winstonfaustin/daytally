@@ -1,0 +1,12 @@
+.venv/
+venv/
+.env
+uploads/
+__pycache__/
+*.pyc
+tests/
+evaluation/
+report/
+SANOOK.jpg
+*.md
+.git/
