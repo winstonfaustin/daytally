@@ -5,6 +5,10 @@ from google import genai
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
+def resolve_model(override: str | None = None) -> str:
+    return (override or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash").strip()
+
+
 def build_client() -> genai.Client:
     api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
     if not api_key or api_key == "your_gemini_api_key_here":

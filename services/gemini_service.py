@@ -7,7 +7,9 @@ from google.genai import types
 from models.schema import BillSplitResult
 from prompts.system_prompt import MULTIMODAL_USER_PROMPT, SYSTEM_PROMPT
 from services.bill_calculator import recalc_proportional_tax_tip
-from services.gemini_client import DEFAULT_MODEL, build_client
+from services.error_gates import collect_error_flags
+from services.idr_amounts import IDR_RESTORE_FLAG, restore_idr_thousands
+from services.gemini_client import build_client, resolve_model
 
 AUDIO_MIME_TYPES = {
     ".webm": "audio/webm",
@@ -32,9 +34,11 @@ def split_bill_from_uploads(
     *,
     audio_path: str | None = None,
     voice_text: str | None = None,
+    model: str | None = None,
 ) -> tuple[dict, dict]:
     """Read receipt image and voice input via Gemini multimodal API and return structured bill split JSON."""
     client = build_client()
+    model_name = resolve_model(model)
     receipt = Path(receipt_path)
     image_mime = mimetypes.guess_type(receipt.name)[0] or "image/jpeg"
 
@@ -56,7 +60,7 @@ def split_bill_from_uploads(
     contents.append(MULTIMODAL_USER_PROMPT)
 
     response = client.models.generate_content(
-        model=DEFAULT_MODEL,
+        model=model_name,
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
@@ -66,9 +70,18 @@ def split_bill_from_uploads(
         ),
     )
 
-    result = recalc_proportional_tax_tip(_parse_response(response))
+    parsed = _parse_response(response)
+    idr_scaled = restore_idr_thousands(parsed)
+    printed_footer = dict(parsed.get("receipt_summary") or {})
+    result = recalc_proportional_tax_tip(parsed)
+    flags = collect_error_flags(result, printed_footer=printed_footer)
+    if idr_scaled:
+        flags.append(dict(IDR_RESTORE_FLAG))
     debug = {
+        "architecture": "unified",
         "input_mode": input_mode,
-        "model": DEFAULT_MODEL,
+        "model": model_name,
+        "printed_footer": printed_footer,
+        "flags": flags,
     }
     return result, debug

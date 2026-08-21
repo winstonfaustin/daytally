@@ -70,6 +70,11 @@ def check_golden_cases() -> tuple[int, int]:
       for name, amount in food.items()
     ]
     data = {
+      "event_details": {
+        "title": case.get("id", "case"),
+        "date": "",
+        "currency": case.get("expected_currency", "SGD"),
+      },
       "receipt_summary": dict(case["receipt_summary"]),
       "participants": participants,
     }
@@ -117,8 +122,8 @@ def main() -> int:
   print("Unit tests:", "ALL PASSED" if tests_ok else "FAILED")
 
   print("\n" + "=" * 40)
-  print("Note: Multimodal latency and receipt reading accuracy require")
-  print("live Gemini API trials. Log mean latency over 10 runs in Task 4.")
+  print("Offline suite complete. For live architecture comparison:")
+  print("  python evaluation/compare_architectures.py")
   return 0 if tests_ok and golden_pass == golden_total else 1
 
 

@@ -1,0 +1,66 @@
+{
+  "created_utc": "20260818T165329Z",
+  "latency_target_s": 10.0,
+  "models": [
+    "gemini-2.5-flash"
+  ],
+  "architectures": [
+    "unified",
+    "separated"
+  ],
+  "rows": [
+    {
+      "case_id": "sanook_kitchen_three_person",
+      "architecture": "unified",
+      "model": "gemini-2.5-flash",
+      "ok": true,
+      "latency_s": 16.471,
+      "error": null,
+      "flags": [],
+      "score": {
+        "schema_ok": true,
+        "names_ok": true,
+        "totals_within_0_01": true,
+        "people": [
+          {
+            "name": "Mevan",
+            "food": 14.6,
+            "food_gt": 14.6,
+            "total": 17.5,
+            "total_gt": 17.5,
+            "total_pass": true,
+            "food_pass": true
+          },
+          {
+            "name": "Winston",
+            "food": 11.2,
+            "food_gt": 11.2,
+            "total": 13.43,
+            "total_gt": 13.43,
+            "total_pass": true,
+            "food_pass": true
+          },
+          {
+            "name": "Albert",
+            "food": 11.2,
+            "food_gt": 11.2,
+            "total": 13.43,
+            "total_gt": 13.43,
+            "total_pass": true,
+            "food_pass": true
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "sanook_kitchen_three_person",
+      "architecture": "separated",
+      "model": "gemini-2.5-flash",
+      "ok": false,
+      "latency_s": 257.973,
+      "error": "Unterminated string starting at: line 22 column 24 (char 454)",
+      "flags": [],
+      "score": null
+    }
+  ]
+}

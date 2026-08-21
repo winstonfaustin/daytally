@@ -22,6 +22,8 @@
       <nav class="header-nav">
         <button type="button" class="nav-btn active" id="nav-new" data-view="new">New split</button>
         <button type="button" class="nav-btn" id="nav-history" data-view="history">History</button>
+        <button type="button" class="nav-btn" id="nav-calendar" data-view="calendar">Calendar</button>
+        <button type="button" class="nav-btn" id="nav-chat" data-view="chat">Chatbot</button>
       </nav>
     </header>
 
@@ -29,7 +31,7 @@
     <main class="main" id="view-new">
       <section class="hero card">
         <h2>Split a bill in seconds</h2>
-        <p>Snap your receipt, record who had what, and DayTally does the math.</p>
+        <p>Snap your receipt, fill who had what, and DayTally does the math.</p>
       </section>
 
       <div class="wizard-steps" id="wizard-steps">
@@ -39,7 +41,7 @@
         </div>
         <div class="wizard-step" data-step="2">
           <span class="step-num">2</span>
-          <span class="step-label">Voice</span>
+          <span class="step-label">Who</span>
         </div>
         <div class="wizard-step" data-step="3">
           <span class="step-num">3</span>
@@ -70,31 +72,44 @@
         <button type="button" class="btn-primary" id="btn-to-voice" disabled>Continue</button>
       </section>
 
-      <!-- Step 2: Voice -->
+      <!-- Step 2: Who had what -->
       <section class="card wizard-panel hidden" id="step-voice">
-        <h3 class="panel-title">Say who had what</h3>
-        <p class="panel-desc">Hold the button and describe the split. Include the event name, who ate what, and who shares items.</p>
+        <h3 class="panel-title">Who had what</h3>
+        <p class="panel-desc">Name each person and the dish they ordered. Add shared plates on the last line. You do not type prices.</p>
 
-        <div class="recorder">
-          <button type="button" class="record-btn" id="record-btn" aria-label="Hold to record">
-            <span class="record-icon" id="record-icon">🎙️</span>
-            <span class="record-label" id="record-label">Hold to record</span>
-          </button>
-          <p class="record-timer" id="record-timer">0:00</p>
-          <div class="record-wave hidden" id="record-wave">
-            <span></span><span></span><span></span><span></span><span></span>
+        <div class="split-form" id="split-form">
+          <div class="edit-field">
+            <label for="split-event">Event (optional)</label>
+            <input type="text" id="split-event" maxlength="80" placeholder="Dinner at Sanook" autocomplete="off">
+          </div>
+
+          <p class="split-form-label">People</p>
+          <div class="split-people" id="split-people"></div>
+          <button type="button" class="btn-text" id="btn-add-person">+ Add person</button>
+
+          <div class="edit-field split-shared-field">
+            <label for="split-shared">Shared by everyone (optional)</label>
+            <input type="text" id="split-shared" maxlength="120" placeholder="beef, drinks" autocomplete="off">
           </div>
         </div>
 
-        <div class="audio-preview hidden" id="audio-preview">
-          <p class="preview-label">Recording ready</p>
-          <audio controls id="audio-playback"></audio>
-          <button type="button" class="btn-text" id="btn-rerecord">Re-record</button>
-        </div>
-
         <details class="text-fallback">
-          <summary>Or type it instead</summary>
-          <textarea id="voice-text-fallback" rows="4" placeholder="e.g. Dinner at Sanook Kitchen. Mevan had the chicken and rice. Winston had the pineapple fried rice. Albert had the honey chicken rice. We all shared the beef."></textarea>
+          <summary>Or speak instead</summary>
+          <div class="recorder">
+            <button type="button" class="record-btn" id="record-btn" aria-label="Hold to record">
+              <span class="record-icon" id="record-icon">🎙️</span>
+              <span class="record-label" id="record-label">Hold to record</span>
+            </button>
+            <p class="record-timer" id="record-timer">0:00</p>
+            <div class="record-wave hidden" id="record-wave">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+          </div>
+          <div class="audio-preview hidden" id="audio-preview">
+            <p class="preview-label">Recording ready</p>
+            <audio controls id="audio-playback"></audio>
+            <button type="button" class="btn-text" id="btn-rerecord">Re-record</button>
+          </div>
         </details>
 
         <div class="btn-row">
@@ -119,6 +134,7 @@
       <section class="card wizard-panel hidden" id="step-review">
         <h3 class="panel-title">Review before confirming</h3>
         <p class="panel-desc">Check the details below. Who ordered what, GST, service charge, and each person's share are listed for you to edit before you confirm.</p>
+        <div class="review-flags hidden" id="review-flags" role="status"></div>
 
         <div class="edit-event">
           <div class="edit-field">
@@ -213,6 +229,14 @@
           <p class="share-toast hidden" id="share-toast">Copied to clipboard!</p>
         </div>
 
+        <div class="card calendar-bind-card" id="calendar-bind-card">
+          <h3 class="section-title">Calendar</h3>
+          <p class="panel-desc" id="calendar-bind-status">This split will be linked to a calendar event.</p>
+          <div class="btn-row">
+            <button type="button" class="btn-secondary" id="btn-open-calendar">Open calendar</button>
+          </div>
+        </div>
+
         <h3 class="section-title">Who owes what</h3>
         <div class="participants-grid" id="participants-grid"></div>
 
@@ -227,6 +251,60 @@
         <p class="panel-desc">Your recent bill splits saved on this device.</p>
         <div class="history-list" id="history-list"></div>
         <p class="history-empty hidden" id="history-empty">No splits yet. Create your first one!</p>
+      </section>
+    </main>
+
+    <!-- Calendar view -->
+    <main class="main hidden" id="view-calendar">
+      <section class="card">
+        <h3 class="panel-title">Events</h3>
+        <p class="panel-desc">Confirmed splits are linked to calendar events on this device. Add a planned night out, or open a linked bill.</p>
+
+        <form class="event-create" id="event-create-form">
+          <div class="edit-row">
+            <div class="edit-field">
+              <label for="event-title-input">Event title</label>
+              <input type="text" id="event-title-input" maxlength="80" placeholder="Dinner with friends" required>
+            </div>
+            <div class="edit-field">
+              <label for="event-date-input">Date</label>
+              <input type="date" id="event-date-input" required>
+            </div>
+          </div>
+          <div class="edit-field">
+            <label for="event-notes-input">Notes (optional)</label>
+            <input type="text" id="event-notes-input" maxlength="160" placeholder="Place, who is coming">
+          </div>
+          <button type="submit" class="btn-primary" id="btn-create-event">Add event</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h3 class="section-title">Upcoming and past</h3>
+        <div class="event-list" id="event-list"></div>
+        <p class="history-empty hidden" id="event-empty">No events yet. Confirm a split or add one above.</p>
+      </section>
+    </main>
+
+    <!-- Chatbot view -->
+    <main class="main hidden" id="view-chat">
+      <section class="card chat-card">
+        <h3 class="panel-title">Ask DayTally</h3>
+        <p class="panel-desc">Ask about saved splits and calendar events. Money answers come from stored totals, not guessed amounts.</p>
+
+        <div class="chat-chips" id="chat-chips">
+          <button type="button" class="chip" data-q="How much have I spent in total?">Total spend</button>
+          <button type="button" class="chip" data-q="What do I still owe?">What do I owe?</button>
+          <button type="button" class="chip" data-q="List my recent events">Recent events</button>
+          <button type="button" class="chip" data-q="What was my last split?">Last split</button>
+        </div>
+
+        <div class="chat-log" id="chat-log" aria-live="polite"></div>
+
+        <form class="chat-form" id="chat-form">
+          <input type="text" id="chat-input" maxlength="200" placeholder="e.g. What do I owe Mevan?" autocomplete="off">
+          <button type="submit" class="btn-primary" id="btn-chat-send">Ask</button>
+        </form>
       </section>
     </main>
 

@@ -1,7 +1,7 @@
 [
   {
     "id": "sanook_kitchen_three_person",
-    "description": "Manual ground truth for calculator testing. Sanook Kitchen receipt with three participants and shared beef item.",
+    "description": "Manual ground truth. Sanook Kitchen, three participants, shared beef, rice x2 on Mevan.",
     "input_note": "Receipt image plus typed instructions naming Mevan, Winston and Albert.",
     "expected_currency": "SGD",
     "expected_participants": ["Mevan", "Winston", "Albert"],
@@ -22,5 +22,101 @@
       "Albert": {"tax_and_tip_share": 2.23, "total_owed": 13.43}
     },
     "tolerance": 0.01
+  },
+  {
+    "id": "two_person_lunch",
+    "description": "Calculator-only case. Two people, no shared item.",
+    "input_note": "Offline calculator ground truth. Add a receipt photo later for live tests.",
+    "expected_currency": "SGD",
+    "expected_participants": ["Aisha", "Ben"],
+    "receipt_summary": {
+      "subtotal": 30.00,
+      "tax": 3.00,
+      "tip": 3.00,
+      "grand_total": 36.00
+    },
+    "participant_food_totals": {
+      "Aisha": 20.00,
+      "Ben": 10.00
+    },
+    "expected_after_calculator": {
+      "Aisha": {"tax_and_tip_share": 4.00, "total_owed": 24.00},
+      "Ben": {"tax_and_tip_share": 2.00, "total_owed": 12.00}
+    },
+    "tolerance": 0.01
+  },
+  {
+    "id": "four_person_equal_food",
+    "description": "Calculator-only case. Four equal food totals.",
+    "input_note": "Offline calculator ground truth. Add a receipt photo later for live tests.",
+    "expected_currency": "SGD",
+    "expected_participants": ["Mei", "Jon", "Priya", "Sam"],
+    "receipt_summary": {
+      "subtotal": 40.00,
+      "tax": 4.00,
+      "tip": 4.00,
+      "grand_total": 48.00
+    },
+    "participant_food_totals": {
+      "Mei": 10.00,
+      "Jon": 10.00,
+      "Priya": 10.00,
+      "Sam": 10.00
+    },
+    "expected_after_calculator": {
+      "Mei": {"tax_and_tip_share": 2.00, "total_owed": 12.00},
+      "Jon": {"tax_and_tip_share": 2.00, "total_owed": 12.00},
+      "Priya": {"tax_and_tip_share": 2.00, "total_owed": 12.00},
+      "Sam": {"tax_and_tip_share": 2.00, "total_owed": 12.00}
+    },
+    "tolerance": 0.01
+  },
+  {
+    "id": "shared_item_three_way",
+    "description": "Calculator-only case. One shared dish split equally on top of personal items.",
+    "input_note": "Offline calculator ground truth. $9.90 shared three ways = $3.30 each.",
+    "expected_currency": "SGD",
+    "expected_participants": ["Mevan", "Winston", "Albert"],
+    "receipt_summary": {
+      "subtotal": 24.90,
+      "tax": 2.49,
+      "tip": 2.49,
+      "grand_total": 29.88
+    },
+    "participant_food_totals": {
+      "Mevan": 11.20,
+      "Winston": 6.85,
+      "Albert": 6.85
+    },
+    "expected_after_calculator": {
+      "Mevan": {"tax_and_tip_share": 2.24, "total_owed": 13.44},
+      "Winston": {"tax_and_tip_share": 1.38, "total_owed": 8.23},
+      "Albert": {"tax_and_tip_share": 1.36, "total_owed": 8.21}
+    },
+    "tolerance": 0.01
+  },
+  {
+    "id": "idr_three_person_service",
+    "description": "Calculator-only IDR case. Whole-rupiah quantum. Service 15000, no tax.",
+    "input_note": "Offline calculator ground truth for Indonesian currency rounding.",
+    "expected_currency": "IDR",
+    "expected_participants": ["A", "B", "C"],
+    "receipt_summary": {
+      "subtotal": 150000,
+      "tax": 0,
+      "tip": 15000,
+      "grand_total": 165000
+    },
+    "participant_food_totals": {
+      "A": 56000,
+      "B": 50000,
+      "C": 44000
+    },
+    "expected_after_calculator": {
+      "A": {"tax_and_tip_share": 5600, "total_owed": 61600},
+      "B": {"tax_and_tip_share": 5000, "total_owed": 55000},
+      "C": {"tax_and_tip_share": 4400, "total_owed": 48400}
+    },
+    "tolerance": 0.5
   }
 ]

@@ -88,6 +88,7 @@ def process_bill():
                 "success": True,
                 "data": result,
                 "debug": debug,
+                "flags": debug.get("flags") or [],
             }
         )
     except ValueError as exc:

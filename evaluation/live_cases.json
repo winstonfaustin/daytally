@@ -1,0 +1,9 @@
+[
+  {
+    "id": "sanook_kitchen_three_person",
+    "receipt": "SANOOK.jpg",
+    "voice_text": "Mevan had the 2 Thai fragrant steam rice and the deep-fried chicken with Thai herb. Winston had the pineapple fried rice. Albert had the honey chicken rice. Everyone shares the stir-fried beef with kai lan evenly between the three of us.",
+    "golden_id": "sanook_kitchen_three_person",
+    "notes": "Only live case with a receipt image in the repo. Add more objects here as you photograph new bills."
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "_comment": "Copy this object into live_cases.json after you photograph a receipt and fill totals by hand.",
+  "id": "receipt_02_short_name",
+  "receipt": "receipts/your_photo.jpg",
+  "voice_text": "Who was there and who ate what. Name GST and service charge if relevant.",
+  "golden_id": "match_an_id_in_golden_cases.json",
+  "manual_ground_truth": {
+    "currency": "SGD",
+    "participants": ["Name1", "Name2"],
+    "receipt_summary": {
+      "subtotal": 0.00,
+      "tax": 0.00,
+      "tip": 0.00,
+      "grand_total": 0.00
+    },
+    "participant_food_totals": {
+      "Name1": 0.00,
+      "Name2": 0.00
+    },
+    "expected_after_calculator": {
+      "Name1": {"tax_and_tip_share": 0.00, "total_owed": 0.00},
+      "Name2": {"tax_and_tip_share": 0.00, "total_owed": 0.00}
+    }
+  }
+}
