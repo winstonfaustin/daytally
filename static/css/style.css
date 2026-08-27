@@ -226,11 +226,36 @@ body {
   background: var(--accent-soft);
 }
 
-.dropzone input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
+.dropzone-preview {
+  cursor: default;
+  margin-bottom: 0.85rem;
+}
+
+.dropzone-preview:hover,
+.dropzone-preview:focus-within {
+  border-color: var(--border);
+  background: var(--surface-raised);
+}
+
+.dropzone-preview.dragover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  cursor: copy;
+}
+
+.receipt-pick-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   cursor: pointer;
+  margin: 0 0 0.75rem;
+  box-sizing: border-box;
+}
+
+.receipt-pick-btn input {
+  display: none;
 }
 
 .receipt-preview {
@@ -1275,4 +1300,106 @@ body {
 
 .footer p {
   margin: 0;
+}
+
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.user-chip #user-chip-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.25rem;
+}
+
+.auth-screen.hidden {
+  display: none;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+}
+
+.auth-card h2 {
+  margin: 0 0 0.5rem;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.auth-error {
+  margin-top: 0.75rem;
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+.field-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.payer-field {
+  margin: 1rem 0 1.25rem;
+}
+
+.payer-banner {
+  margin: 0.85rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.payer-tag {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: var(--accent-soft);
+  color: var(--accent);
+  vertical-align: middle;
+}
+
+.settle-line {
+  margin: 0.35rem 0 0.65rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.settle-line.payer {
+  color: var(--success);
+  font-weight: 600;
 }

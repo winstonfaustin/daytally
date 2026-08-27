@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-  <div class="page">
+  <div class="page hidden" id="app-shell">
     <header class="header">
       <div class="logo">
         <span class="logo-icon">📅</span>
@@ -19,12 +19,18 @@
           <p class="tagline">Your student life copilot</p>
         </div>
       </div>
-      <nav class="header-nav">
-        <button type="button" class="nav-btn active" id="nav-new" data-view="new">New split</button>
-        <button type="button" class="nav-btn" id="nav-history" data-view="history">History</button>
-        <button type="button" class="nav-btn" id="nav-calendar" data-view="calendar">Calendar</button>
-        <button type="button" class="nav-btn" id="nav-chat" data-view="chat">Chatbot</button>
-      </nav>
+      <div class="header-right">
+        <div class="user-chip" id="user-chip">
+          <span id="user-chip-name">Guest</span>
+          <button type="button" class="btn-text" id="btn-logout">Log out</button>
+        </div>
+        <nav class="header-nav">
+          <button type="button" class="nav-btn active" id="nav-new" data-view="new">New split</button>
+          <button type="button" class="nav-btn" id="nav-history" data-view="history">History</button>
+          <button type="button" class="nav-btn" id="nav-calendar" data-view="calendar">Calendar</button>
+          <button type="button" class="nav-btn" id="nav-chat" data-view="chat">Chatbot</button>
+        </nav>
+      </div>
     </header>
 
     <!-- New split flow -->
@@ -56,17 +62,21 @@
       <!-- Step 1: Receipt -->
       <section class="card wizard-panel" id="step-receipt">
         <h3 class="panel-title">Snap your receipt</h3>
-        <p class="panel-desc">Take a photo or upload an image of the bill.</p>
+        <p class="panel-desc">Preview appears below after you add a photo.</p>
 
-        <div class="dropzone dropzone-large" id="receipt-dropzone" tabindex="0">
-          <input type="file" id="receipt" accept="image/*" capture="environment">
+        <div class="dropzone dropzone-large dropzone-preview" id="receipt-dropzone" tabindex="0">
           <div class="dropzone-content" id="receipt-placeholder">
             <span class="dropzone-icon">🧾</span>
-            <p class="dropzone-title">Tap to take photo or upload</p>
+            <p class="dropzone-title">Receipt preview</p>
             <p class="dropzone-hint">PNG, JPG, WEBP</p>
           </div>
           <img class="receipt-preview hidden" id="receipt-preview" alt="Receipt preview">
         </div>
+
+        <label class="btn-primary receipt-pick-btn" for="receipt">
+          Take photo | Choose from gallery
+          <input type="file" id="receipt" accept="image/*" hidden>
+        </label>
         <p class="file-name" id="receipt-name"></p>
 
         <button type="button" class="btn-primary" id="btn-to-voice" disabled>Continue</button>
@@ -177,6 +187,15 @@
           </div>
         </div>
         <p class="split-note">GST and service charge are split fairly based on what each person ordered. Change the percentages above to adjust.</p>
+
+        <div class="edit-field payer-field">
+          <label for="edit-payer">Who paid the bill first?</label>
+          <select id="edit-payer">
+            <option value="">Select who fronted the money</option>
+          </select>
+          <p class="field-hint">Everyone else owes this person their share. Makes “what do I owe?” clear in the chatbot.</p>
+        </div>
+
         <div class="edit-participants" id="edit-participants"></div>
 
         <div class="btn-row">
@@ -203,6 +222,7 @@
               <span class="amount" id="grand-total">-</span>
             </div>
           </div>
+          <p class="payer-banner" id="payer-banner"></p>
 
           <div class="receipt-summary">
             <div class="summary-item">
@@ -311,6 +331,45 @@
     <footer class="footer">
       <p>DayTally · Split bills · Track expenses · Plan together</p>
     </footer>
+  </div>
+
+  <div class="auth-screen" id="auth-screen">
+    <div class="auth-card card">
+      <h2>Welcome to DayTally</h2>
+      <p class="panel-desc">Create a local profile so the chatbot knows who “I” is, and each person keeps their own bills on this device.</p>
+
+      <div class="auth-tabs">
+        <button type="button" class="nav-btn active" id="auth-tab-login">Log in</button>
+        <button type="button" class="nav-btn" id="auth-tab-register">Create profile</button>
+      </div>
+
+      <form id="auth-login-form" class="auth-form">
+        <div class="edit-field">
+          <label for="login-name">Your name</label>
+          <input type="text" id="login-name" maxlength="40" required autocomplete="username" placeholder="Winston">
+        </div>
+        <div class="edit-field">
+          <label for="login-pass">Password</label>
+          <input type="password" id="login-pass" maxlength="64" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn-primary">Log in</button>
+      </form>
+
+      <form id="auth-register-form" class="auth-form hidden">
+        <div class="edit-field">
+          <label for="register-name">Your name (use the same spelling as on bills)</label>
+          <input type="text" id="register-name" maxlength="40" required autocomplete="username" placeholder="Winston">
+        </div>
+        <div class="edit-field">
+          <label for="register-pass">Password</label>
+          <input type="password" id="register-pass" maxlength="64" required autocomplete="new-password" minlength="4">
+        </div>
+        <button type="submit" class="btn-primary">Create profile</button>
+      </form>
+
+      <p class="auth-error hidden" id="auth-error" role="alert"></p>
+      <p class="field-hint">Profiles stay in this browser only. No cloud account yet.</p>
+    </div>
   </div>
 
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>

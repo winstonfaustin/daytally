@@ -12,6 +12,8 @@ const state = {
 
 const HISTORY_KEY = "daytally_history";
 const EVENTS_KEY = "daytally_events";
+const USERS_KEY = "daytally_users";
+const SESSION_KEY = "daytally_session";
 const MAX_HISTORY = 20;
 
 /* ── DOM refs ── */
@@ -88,9 +90,21 @@ const chatLog = document.getElementById("chat-log");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const chatChips = document.getElementById("chat-chips");
+const appShell = document.getElementById("app-shell");
+const authScreen = document.getElementById("auth-screen");
+const authTabLogin = document.getElementById("auth-tab-login");
+const authTabRegister = document.getElementById("auth-tab-register");
+const authLoginForm = document.getElementById("auth-login-form");
+const authRegisterForm = document.getElementById("auth-register-form");
+const authError = document.getElementById("auth-error");
+const userChipName = document.getElementById("user-chip-name");
+const btnLogout = document.getElementById("btn-logout");
+const editPayer = document.getElementById("edit-payer");
+const payerBanner = document.getElementById("payer-banner");
 
 state.lastHistoryId = null;
 state.lastEventId = null;
+state.currentUser = null;
 
 /* ── Recorder ── */
 let mediaRecorder = null;
@@ -626,11 +640,38 @@ function renderReview(data, { skipTaxRecalc = false, keepPercent = false } = {})
   editDate.value = data.event_details.date;
   editCurrency.value = data.event_details.currency;
   updateReviewSummaryFields(data);
+  fillPayerSelect(data);
 
   editParticipants.innerHTML = "";
   data.participants.forEach((person, pIdx) => {
     editParticipants.appendChild(buildEditParticipantCard(data, person, pIdx));
   });
+}
+
+function namesMatch(a, b) {
+  return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+}
+
+function fillPayerSelect(data) {
+  const current = data.paid_by || "";
+  const me = getCurrentUser()?.name || "";
+  editPayer.innerHTML = '<option value="">Select who fronted the money</option>';
+  data.participants.forEach((person) => {
+    const opt = document.createElement("option");
+    opt.value = person.name;
+    opt.textContent = person.name + (me && namesMatch(person.name, me) ? " (you)" : "");
+    editPayer.appendChild(opt);
+  });
+  if (current && data.participants.some((p) => p.name === current)) {
+    editPayer.value = current;
+  } else if (me && data.participants.some((p) => namesMatch(p.name, me))) {
+    const match = data.participants.find((p) => namesMatch(p.name, me));
+    editPayer.value = match.name;
+    data.paid_by = match.name;
+  } else if (data.participants[0]) {
+    editPayer.value = data.participants[0].name;
+    data.paid_by = data.participants[0].name;
+  }
 }
 
 function buildEditParticipantCard(data, person, pIdx) {
@@ -790,9 +831,14 @@ btnBackVoice.addEventListener("click", () => setWizardStep(2));
 
 btnConfirm.addEventListener("click", () => {
   if (!state.draftData) return;
+  if (!editPayer.value) {
+    alert("Select who paid the bill first before confirming.");
+    return;
+  }
   state.draftData.event_details.title = editTitle.value;
   state.draftData.event_details.date = editDate.value;
   state.draftData.event_details.currency = editCurrency.value;
+  state.draftData.paid_by = editPayer.value;
   recalcAll(state.draftData);
   state.confirmedData = deepClone(state.draftData);
   const saved = saveToHistory(state.confirmedData);
@@ -806,10 +852,15 @@ btnConfirm.addEventListener("click", () => {
   setWizardStep(4);
 });
 
+editPayer.addEventListener("change", () => {
+  if (state.draftData) state.draftData.paid_by = editPayer.value;
+});
+
 /* ── Results ── */
 function renderResults(data) {
   const { event_details: event, receipt_summary: summary, participants } = data;
   const currency = event.currency;
+  const payer = data.paid_by || "";
 
   document.getElementById("event-title").textContent = event.title;
   document.getElementById("event-date").textContent = event.date;
@@ -823,12 +874,23 @@ function renderResults(data) {
   document.getElementById("tax").textContent = formatMoney(summary.tax, currency);
   document.getElementById("tip").textContent = formatMoney(summary.tip, currency);
 
+  if (payerBanner) {
+    if (payer) {
+      payerBanner.textContent = `${payer} paid the bill first. Everyone else should repay ${payer} their share.`;
+      payerBanner.classList.remove("hidden");
+    } else {
+      payerBanner.textContent = "";
+      payerBanner.classList.add("hidden");
+    }
+  }
+
   const grid = document.getElementById("participants-grid");
   grid.innerHTML = "";
 
   participants.forEach((person) => {
     const card = document.createElement("article");
     card.className = "participant-card";
+    const isPayer = payer && namesMatch(person.name, payer);
 
     const itemsHtml = person.items_consumed
       .map(
@@ -837,11 +899,18 @@ function renderResults(data) {
       )
       .join("");
 
+    const settleLine = isPayer
+      ? `<div class="settle-line payer">Paid the bill · others repay you</div>`
+      : payer
+        ? `<div class="settle-line">Repay ${escapeHtml(payer)}: ${formatMoney(person.total_owed, currency)}</div>`
+        : "";
+
     card.innerHTML = `
       <div class="participant-header">
-        <h4 class="participant-name">${escapeHtml(person.name)}</h4>
+        <h4 class="participant-name">${escapeHtml(person.name)}${isPayer ? ' <span class="payer-tag">Paid first</span>' : ""}</h4>
         <span class="participant-total">${formatMoney(person.total_owed, currency)}</span>
       </div>
+      ${settleLine}
       <ul class="items-list">${itemsHtml}</ul>
       <div class="participant-card-bottom">
         <div class="participant-footer">
@@ -864,11 +933,14 @@ function renderResults(data) {
 function buildSummaryText(data) {
   const { event_details: event, receipt_summary: summary, participants } = data;
   const c = event.currency;
+  const payer = data.paid_by || "";
   let text = `DayTally: ${event.title}\n${event.date}\n\n`;
-  text += `Grand total: ${formatMoney(summary.grand_total, c)}\n\n`;
-  text += `Who owes what:\n`;
+  text += `Grand total: ${formatMoney(summary.grand_total, c)}\n`;
+  if (payer) text += `Paid first by: ${payer}\n`;
+  text += `\nWho owes what:\n`;
   participants.forEach((p) => {
-    text += `• ${p.name}: ${formatMoney(p.total_owed, c)}\n`;
+    const tag = payer && namesMatch(p.name, payer) ? " (paid the bill)" : payer ? ` → repay ${payer}` : "";
+    text += `• ${p.name}: ${formatMoney(p.total_owed, c)}${tag}\n`;
     p.items_consumed.forEach((item) => {
       text += `  - ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
     });
@@ -879,7 +951,14 @@ function buildSummaryText(data) {
 
 function buildPersonMessage(data, person) {
   const c = data.event_details.currency;
-  let text = `Hey ${person.name}! For ${data.event_details.title} (${data.event_details.date}), you owe ${formatMoney(person.total_owed, c)}.\n\nBreakdown:\n`;
+  const payer = data.paid_by || "";
+  let text = `Hey ${person.name}! For ${data.event_details.title} (${data.event_details.date}), your share is ${formatMoney(person.total_owed, c)}.`;
+  if (payer && !namesMatch(person.name, payer)) {
+    text += ` Please repay ${payer}.`;
+  } else if (payer && namesMatch(person.name, payer)) {
+    text += ` You paid the bill first.`;
+  }
+  text += `\n\nBreakdown:\n`;
   person.items_consumed.forEach((item) => {
     text += `• ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
   });
@@ -944,42 +1023,193 @@ btnNewSplit.addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
-/* ── History (localStorage) ── */
+/* ── Auth (local profiles) ── */
+function loadUsers() {
+  try {
+    return JSON.parse(localStorage.getItem(USERS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveUsers(users) {
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
+
+async function hashPassword(password) {
+  const data = new TextEncoder().encode(password);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function getCurrentUser() {
+  if (state.currentUser) return state.currentUser;
+  const id = localStorage.getItem(SESSION_KEY);
+  if (!id) return null;
+  const user = loadUsers().find((u) => u.id === id) || null;
+  state.currentUser = user;
+  return user;
+}
+
+function setSession(user) {
+  state.currentUser = user;
+  if (user) localStorage.setItem(SESSION_KEY, user.id);
+  else localStorage.removeItem(SESSION_KEY);
+  if (userChipName) userChipName.textContent = user ? user.name : "Guest";
+}
+
+function showAuthError(msg) {
+  authError.textContent = msg;
+  authError.classList.toggle("hidden", !msg);
+}
+
+function showApp() {
+  authScreen.classList.add("hidden");
+  appShell.classList.remove("hidden");
+  const user = getCurrentUser();
+  if (userChipName) userChipName.textContent = user ? user.name : "Guest";
+  migrateLegacyDataToUser(user);
+}
+
+function showAuth() {
+  appShell.classList.add("hidden");
+  authScreen.classList.remove("hidden");
+  showAuthError("");
+}
+
+function migrateLegacyDataToUser(user) {
+  if (!user) return;
+  const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  let changed = false;
+  history.forEach((h) => {
+    if (!h.userId) {
+      h.userId = user.id;
+      changed = true;
+    }
+  });
+  if (changed) localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+
+  const events = JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
+  let eChanged = false;
+  events.forEach((e) => {
+    if (!e.userId) {
+      e.userId = user.id;
+      eChanged = true;
+    }
+  });
+  if (eChanged) localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+}
+
+authTabLogin.addEventListener("click", () => {
+  authTabLogin.classList.add("active");
+  authTabRegister.classList.remove("active");
+  authLoginForm.classList.remove("hidden");
+  authRegisterForm.classList.add("hidden");
+  showAuthError("");
+});
+
+authTabRegister.addEventListener("click", () => {
+  authTabRegister.classList.add("active");
+  authTabLogin.classList.remove("active");
+  authRegisterForm.classList.remove("hidden");
+  authLoginForm.classList.add("hidden");
+  showAuthError("");
+});
+
+authRegisterForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("register-name").value.trim();
+  const password = document.getElementById("register-pass").value;
+  if (name.length < 2) return showAuthError("Name must be at least 2 characters.");
+  if (password.length < 4) return showAuthError("Password must be at least 4 characters.");
+  const users = loadUsers();
+  if (users.some((u) => namesMatch(u.name, name))) {
+    return showAuthError("That name already has a profile. Log in instead.");
+  }
+  const user = {
+    id: `u_${Date.now()}`,
+    name,
+    passwordHash: await hashPassword(password),
+    createdAt: new Date().toISOString(),
+  };
+  users.push(user);
+  saveUsers(users);
+  setSession(user);
+  showApp();
+});
+
+authLoginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("login-name").value.trim();
+  const password = document.getElementById("login-pass").value;
+  const user = loadUsers().find((u) => namesMatch(u.name, name));
+  if (!user) return showAuthError("No profile with that name. Create one first.");
+  const hash = await hashPassword(password);
+  if (hash !== user.passwordHash) return showAuthError("Wrong password.");
+  setSession(user);
+  showApp();
+});
+
+btnLogout.addEventListener("click", () => {
+  setSession(null);
+  chatLog.innerHTML = "";
+  chatLog.dataset.ready = "";
+  showAuth();
+});
+
+/* ── History (localStorage, per profile) ── */
 function saveToHistory(data) {
-  const history = loadHistory();
+  const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  const user = getCurrentUser();
   const entry = {
     id: Date.now().toString(),
+    userId: user?.id || null,
     savedAt: new Date().toISOString(),
     eventId: null,
     data: deepClone(data),
   };
   history.unshift(entry);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY * 5)));
   return entry;
 }
 
 function loadHistory() {
   try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    const user = getCurrentUser();
+    if (!user) return all;
+    return all.filter((h) => h.userId === user.id || !h.userId);
   } catch {
     return [];
   }
 }
 
 function saveHistory(history) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  const user = getCurrentUser();
+  const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  const others = user ? all.filter((h) => h.userId && h.userId !== user.id) : [];
+  localStorage.setItem(HISTORY_KEY, JSON.stringify([...history, ...others].slice(0, MAX_HISTORY * 5)));
 }
 
 function loadEvents() {
   try {
-    return JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
+    const all = JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
+    const user = getCurrentUser();
+    if (!user) return all;
+    return all.filter((e) => e.userId === user.id || !e.userId);
   } catch {
     return [];
   }
 }
 
 function saveEvents(events) {
-  localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+  const user = getCurrentUser();
+  const all = JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
+  const others = user ? all.filter((e) => e.userId && e.userId !== user.id) : [];
+  const tagged = events.map((e) => ({ ...e, userId: e.userId || user?.id || null }));
+  localStorage.setItem(EVENTS_KEY, JSON.stringify([...tagged, ...others]));
 }
 
 function normalizeEventDate(raw) {
@@ -1002,6 +1232,7 @@ function linkSplitToCalendar(historyEntry) {
   if (!event) {
     event = {
       id: `evt_${Date.now()}`,
+      userId: getCurrentUser()?.id || null,
       title,
       date,
       notes: "",
@@ -1098,6 +1329,7 @@ eventCreateForm.addEventListener("submit", (e) => {
   const events = loadEvents();
   events.unshift({
     id: `evt_${Date.now()}`,
+    userId: getCurrentUser()?.id || null,
     title,
     date,
     notes: eventNotesInput.value.trim(),
@@ -1113,9 +1345,10 @@ eventCreateForm.addEventListener("submit", (e) => {
 function ensureChatWelcome() {
   if (chatLog.dataset.ready === "1") return;
   chatLog.dataset.ready = "1";
+  const me = getCurrentUser()?.name || "you";
   appendChatBubble(
     "bot",
-    "Ask about your saved splits and events. Examples: “How much have I spent?”, “What do I owe Mevan?”, “List my recent events.”"
+    `Hi ${me}. Ask about your saved splits and events. Try “What do I still owe?” — that uses your profile name and who paid first on each bill.`
   );
 }
 
@@ -1139,6 +1372,7 @@ function answerChat(question) {
   const q = question.toLowerCase().trim();
   const history = loadHistory();
   const events = loadEvents();
+  const me = getCurrentUser()?.name || "";
 
   if (!history.length && !events.length) {
     return "I do not have any saved splits or events yet. Confirm a bill first, then ask again.";
@@ -1160,8 +1394,9 @@ function answerChat(question) {
     if (!last) return "No splits saved yet.";
     const d = last.data;
     const c = d.event_details.currency;
+    const payer = d.paid_by ? ` Paid first by ${d.paid_by}.` : "";
     const people = d.participants.map((p) => `${p.name} ${formatMoney(p.total_owed, c)}`).join(", ");
-    return `Last split: ${d.event_details.title} on ${d.event_details.date}. Grand total ${formatMoney(d.receipt_summary.grand_total, c)}. ${people}.`;
+    return `Last split: ${d.event_details.title} on ${d.event_details.date}. Grand total ${formatMoney(d.receipt_summary.grand_total, c)}.${payer} ${people}.`;
   }
 
   if (/how much.*(spend|spent|total)|total spend|grand total|spent in total/.test(q)) {
@@ -1189,25 +1424,70 @@ function answerChat(question) {
     return `Across ${history.length} saved split(s): ${allLine}. This calendar month (${thisMonth}): ${monthLine}. These numbers are summed from stored grand totals only.`;
   }
 
-  const oweMatch = q.match(/(?:owe|owes|owed)\s+([a-z][a-z\-']+)/i) || q.match(/what does\s+([a-z][a-z\-']+)\s+owe/i);
-  if (oweMatch || /what do i (still )?owe|who owes what|balances?/.test(q)) {
+  const askingMyOwe = /what do i (still )?owe|how much do i (still )?owe|what do i need to (pay|repay)/.test(q);
+  const oweMatch =
+    q.match(/(?:owe|owes|owed)\s+([a-z][a-z\-']+)/i) ||
+    q.match(/what does\s+([a-z][a-z\-']+)\s+owe/i);
+  if (askingMyOwe || oweMatch || /who owes what|balances?/.test(q)) {
+    if (askingMyOwe) {
+      if (!me) return "Log in with your profile name first so I know who “I” is.";
+      const debts = [];
+      history.forEach((h) => {
+        const d = h.data;
+        const payer = d.paid_by || "";
+        const meRow = d.participants.find((p) => namesMatch(p.name, me));
+        if (!meRow) return;
+        if (payer && namesMatch(payer, me)) return;
+        debts.push({
+          to: payer || "the group (payer not set)",
+          amount: meRow.total_owed,
+          currency: d.event_details.currency,
+          event: d.event_details.title,
+          date: d.event_details.date,
+        });
+      });
+      if (!debts.length) {
+        return `I found no open shares for ${me}. Either you were not on those bills, or you were marked as who paid first.`;
+      }
+      const byPayee = {};
+      debts.forEach((row) => {
+        const key = `${row.to}|${row.currency}`;
+        byPayee[key] = byPayee[key] || { to: row.to, currency: row.currency, amount: 0, lines: [] };
+        byPayee[key].amount += Number(row.amount || 0);
+        byPayee[key].lines.push(
+          `• ${row.event} (${row.date}): ${formatMoney(row.amount, row.currency)} → ${row.to}`
+        );
+      });
+      const summary = Object.values(byPayee)
+        .map((g) => `${formatMoney(g.amount, g.currency)} to ${g.to}`)
+        .join("; ");
+      const detail = Object.values(byPayee)
+        .flatMap((g) => g.lines)
+        .slice(0, 8)
+        .join("\n");
+      return `As ${me}, you still owe: ${summary}.\n${detail}`;
+    }
+
     const nameFilter = oweMatch ? oweMatch[1] : null;
     const rows = [];
     history.forEach((h) => {
+      const payer = h.data.paid_by || "";
       h.data.participants.forEach((p) => {
         if (nameFilter && !p.name.toLowerCase().includes(nameFilter.toLowerCase())) return;
+        if (payer && namesMatch(p.name, payer)) return;
         rows.push({
           person: p.name,
           amount: p.total_owed,
           currency: h.data.event_details.currency,
           event: h.data.event_details.title,
           date: h.data.event_details.date,
+          to: payer || "payer unset",
         });
       });
     });
     if (!rows.length) {
       return nameFilter
-        ? `I found no stored totals for anyone matching “${nameFilter}”. Names come only from confirmed splits.`
+        ? `I found no stored repay amounts for anyone matching “${nameFilter}”.`
         : "I could not find participant totals in saved splits.";
     }
     if (nameFilter) {
@@ -1220,17 +1500,17 @@ function answerChat(question) {
         .join(" + ");
       const detail = rows
         .slice(0, 6)
-        .map((r) => `• ${r.event} (${r.date}): ${formatMoney(r.amount, r.currency)}`)
+        .map((r) => `• ${r.event} (${r.date}): ${formatMoney(r.amount, r.currency)} → ${r.to}`)
         .join("\n");
-      return `From saved splits, totals for names matching “${nameFilter}”: ${sumLine}.\n${detail}`;
+      return `From saved splits, “${nameFilter}” should repay: ${sumLine}.\n${detail}`;
     }
     return rows
       .slice(0, 10)
-      .map((r) => `• ${r.person} owes ${formatMoney(r.amount, r.currency)} for ${r.event}`)
+      .map((r) => `• ${r.person} owes ${formatMoney(r.amount, r.currency)} to ${r.to} (${r.event})`)
       .join("\n");
   }
 
-  return "I can answer total spend, what someone owes from saved splits, recent events, or your last split. Money always comes from stored confirmations — I will not invent amounts.";
+  return "I can answer total spend, what you owe (using your profile + who paid first), recent events, or your last split. Money always comes from stored confirmations.";
 }
 
 chatForm.addEventListener("submit", (e) => {
@@ -1304,3 +1584,9 @@ function renderHistory() {
     historyList.appendChild(el);
   });
 }
+
+/* ── Boot ── */
+(function boot() {
+  if (getCurrentUser()) showApp();
+  else showAuth();
+})();
