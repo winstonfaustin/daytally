@@ -3,12 +3,14 @@ import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 from services.gemini_service import split_bill_from_uploads
-
-load_dotenv(override=True)
+from services import supabase_service as sb
 
 BASE_DIR = Path(__file__).resolve().parent
 # Vercel serverless allows writes only under /tmp
@@ -34,9 +36,119 @@ def _save_upload(file_storage, prefix: str) -> Path:
     return saved_path
 
 
+def _bearer_token() -> str:
+    header = request.headers.get("Authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return ""
+
+
+def _require_user() -> dict:
+    token = _bearer_token()
+    if not token:
+        raise PermissionError("Please log in.")
+    return sb.user_from_token(token)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/health/supabase", methods=["GET"])
+def supabase_health():
+    return jsonify({"configured": sb.is_configured()})
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    body = request.get_json(silent=True) or {}
+    email = str(body.get("email") or "").strip().lower()
+    password = str(body.get("password") or "")
+    display_name = str(body.get("display_name") or body.get("name") or "").strip()
+    if not email or "@" not in email:
+        return jsonify({"error": "Enter a valid email."}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters."}), 400
+    if len(display_name) < 2:
+        return jsonify({"error": "Display name must be at least 2 characters."}), 400
+    try:
+        payload = sb.register_user(email, password, display_name)
+        return jsonify({"success": True, **payload})
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    body = request.get_json(silent=True) or {}
+    email = str(body.get("email") or "").strip().lower()
+    password = str(body.get("password") or "")
+    if not email or not password:
+        return jsonify({"error": "Email and password are required."}), 400
+    try:
+        payload = sb.login_user(email, password)
+        return jsonify({"success": True, **payload})
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/splits", methods=["GET"])
+def get_splits():
+    try:
+        user = _require_user()
+        return jsonify({"success": True, "splits": sb.list_splits(user["id"])})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/splits", methods=["POST"])
+def post_split():
+    body = request.get_json(silent=True) or {}
+    data = body.get("data")
+    if not isinstance(data, dict):
+        return jsonify({"error": "Missing split data."}), 400
+    try:
+        user = _require_user()
+        saved = sb.save_split(user["id"], data, local_id=body.get("local_id"))
+        return jsonify({"success": True, "split": saved})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/events", methods=["GET"])
+def get_events():
+    try:
+        user = _require_user()
+        return jsonify({"success": True, "events": sb.list_events(user["id"])})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/events", methods=["POST"])
+def post_event():
+    body = request.get_json(silent=True) or {}
+    event = body.get("event")
+    if not isinstance(event, dict):
+        return jsonify({"error": "Missing event data."}), 400
+    try:
+        user = _require_user()
+        saved = sb.save_event(user["id"], event)
+        return jsonify({"success": True, "event": saved})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/process", methods=["POST"])

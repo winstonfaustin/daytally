@@ -12,8 +12,7 @@ const state = {
 
 const HISTORY_KEY = "daytally_history";
 const EVENTS_KEY = "daytally_events";
-const USERS_KEY = "daytally_users";
-const SESSION_KEY = "daytally_session";
+const SESSION_KEY = "daytally_session_v2";
 const MAX_HISTORY = 20;
 
 /* ── DOM refs ── */
@@ -1023,41 +1022,46 @@ btnNewSplit.addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
-/* ── Auth (local profiles) ── */
-function loadUsers() {
+/* ── Auth (Supabase via Flask API) ── */
+function authHeaders() {
+  const session = getSession();
+  if (!session?.access_token) return { "Content-Type": "application/json" };
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session.access_token}`,
+  };
+}
+
+function getSession() {
   try {
-    return JSON.parse(localStorage.getItem(USERS_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
   } catch {
-    return [];
+    return null;
   }
-}
-
-function saveUsers(users) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-async function hashPassword(password) {
-  const data = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 function getCurrentUser() {
   if (state.currentUser) return state.currentUser;
-  const id = localStorage.getItem(SESSION_KEY);
-  if (!id) return null;
-  const user = loadUsers().find((u) => u.id === id) || null;
-  state.currentUser = user;
-  return user;
+  const session = getSession();
+  state.currentUser = session?.user || null;
+  return state.currentUser;
 }
 
-function setSession(user) {
-  state.currentUser = user;
-  if (user) localStorage.setItem(SESSION_KEY, user.id);
-  else localStorage.removeItem(SESSION_KEY);
-  if (userChipName) userChipName.textContent = user ? user.name : "Guest";
+function setSession(payload) {
+  if (!payload) {
+    state.currentUser = null;
+    localStorage.removeItem(SESSION_KEY);
+    if (userChipName) userChipName.textContent = "Guest";
+    return;
+  }
+  const session = {
+    user: payload.user,
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token || "",
+  };
+  state.currentUser = session.user;
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  if (userChipName) userChipName.textContent = session.user.name || session.user.email || "User";
 }
 
 function showAuthError(msg) {
@@ -1065,12 +1069,12 @@ function showAuthError(msg) {
   authError.classList.toggle("hidden", !msg);
 }
 
-function showApp() {
+async function showApp() {
   authScreen.classList.add("hidden");
   appShell.classList.remove("hidden");
   const user = getCurrentUser();
-  if (userChipName) userChipName.textContent = user ? user.name : "Guest";
-  migrateLegacyDataToUser(user);
+  if (userChipName) userChipName.textContent = user ? user.name || user.email : "Guest";
+  await refreshCloudData();
 }
 
 function showAuth() {
@@ -1079,27 +1083,32 @@ function showAuth() {
   showAuthError("");
 }
 
-function migrateLegacyDataToUser(user) {
-  if (!user) return;
-  const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-  let changed = false;
-  history.forEach((h) => {
-    if (!h.userId) {
-      h.userId = user.id;
-      changed = true;
+async function refreshCloudData() {
+  if (!getSession()?.access_token) return;
+  try {
+    const [splitsRes, eventsRes] = await Promise.all([
+      fetch("/api/splits", { headers: authHeaders() }),
+      fetch("/api/events", { headers: authHeaders() }),
+    ]);
+    const splitsJson = await splitsRes.json();
+    const eventsJson = await eventsRes.json();
+    if (splitsRes.ok && Array.isArray(splitsJson.splits)) {
+      const mapped = splitsJson.splits.map((s) => ({
+        id: s.id,
+        userId: s.userId,
+        savedAt: s.savedAt,
+        eventId: s.eventId || null,
+        data: s.data,
+        cloud: true,
+      }));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(mapped));
     }
-  });
-  if (changed) localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-
-  const events = JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
-  let eChanged = false;
-  events.forEach((e) => {
-    if (!e.userId) {
-      e.userId = user.id;
-      eChanged = true;
+    if (eventsRes.ok && Array.isArray(eventsJson.events)) {
+      localStorage.setItem(EVENTS_KEY, JSON.stringify(eventsJson.events));
     }
-  });
-  if (eChanged) localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
+  } catch {
+    /* keep local cache if offline */
+  }
 }
 
 authTabLogin.addEventListener("click", () => {
@@ -1120,36 +1129,50 @@ authTabRegister.addEventListener("click", () => {
 
 authRegisterForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const name = document.getElementById("register-name").value.trim();
+  const display_name = document.getElementById("register-name").value.trim();
+  const email = document.getElementById("register-email").value.trim();
   const password = document.getElementById("register-pass").value;
-  if (name.length < 2) return showAuthError("Name must be at least 2 characters.");
-  if (password.length < 4) return showAuthError("Password must be at least 4 characters.");
-  const users = loadUsers();
-  if (users.some((u) => namesMatch(u.name, name))) {
-    return showAuthError("That name already has a profile. Log in instead.");
+  showAuthError("");
+  try {
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, display_name }),
+    });
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || "Could not create profile.");
+    if (payload.needs_email_confirmation || !payload.access_token) {
+      showAuthError(payload.message || "Account created. Please confirm your email, then log in.");
+      authTabLogin.click();
+      const loginEmail = document.getElementById("login-email");
+      if (loginEmail) loginEmail.value = email;
+      return;
+    }
+    setSession(payload);
+    await showApp();
+  } catch (err) {
+    showAuthError(err.message || "Could not create profile.");
   }
-  const user = {
-    id: `u_${Date.now()}`,
-    name,
-    passwordHash: await hashPassword(password),
-    createdAt: new Date().toISOString(),
-  };
-  users.push(user);
-  saveUsers(users);
-  setSession(user);
-  showApp();
 });
 
 authLoginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const name = document.getElementById("login-name").value.trim();
+  const email = document.getElementById("login-email").value.trim();
   const password = document.getElementById("login-pass").value;
-  const user = loadUsers().find((u) => namesMatch(u.name, name));
-  if (!user) return showAuthError("No profile with that name. Create one first.");
-  const hash = await hashPassword(password);
-  if (hash !== user.passwordHash) return showAuthError("Wrong password.");
-  setSession(user);
-  showApp();
+  showAuthError("");
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || "Could not log in.");
+    setSession(payload);
+    await showApp();
+  } catch (err) {
+    showAuthError(err.message || "Could not log in.");
+  }
 });
 
 btnLogout.addEventListener("click", () => {
@@ -1159,9 +1182,9 @@ btnLogout.addEventListener("click", () => {
   showAuth();
 });
 
-/* ── History (localStorage, per profile) ── */
+/* ── History (local cache + Supabase) ── */
 function saveToHistory(data) {
-  const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  const history = loadHistory();
   const user = getCurrentUser();
   const entry = {
     id: Date.now().toString(),
@@ -1169,9 +1192,34 @@ function saveToHistory(data) {
     savedAt: new Date().toISOString(),
     eventId: null,
     data: deepClone(data),
+    cloud: false,
   };
   history.unshift(entry);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY * 5)));
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+
+  const token = getSession()?.access_token;
+  if (token) {
+    fetch("/api/splits", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ data, local_id: entry.id }),
+    })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!ok || !j.split) return;
+        const all = loadHistory();
+        const idx = all.findIndex((h) => h.id === entry.id);
+        if (idx >= 0) {
+          all[idx].id = j.split.id;
+          all[idx].cloud = true;
+          all[idx].savedAt = j.split.savedAt || all[idx].savedAt;
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
+        }
+        entry.id = j.split.id;
+        entry.cloud = true;
+      })
+      .catch(() => {});
+  }
   return entry;
 }
 
@@ -1180,17 +1228,14 @@ function loadHistory() {
     const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
     const user = getCurrentUser();
     if (!user) return all;
-    return all.filter((h) => h.userId === user.id || !h.userId);
+    return all.filter((h) => !h.userId || h.userId === user.id);
   } catch {
     return [];
   }
 }
 
 function saveHistory(history) {
-  const user = getCurrentUser();
-  const all = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-  const others = user ? all.filter((h) => h.userId && h.userId !== user.id) : [];
-  localStorage.setItem(HISTORY_KEY, JSON.stringify([...history, ...others].slice(0, MAX_HISTORY * 5)));
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
 }
 
 function loadEvents() {
@@ -1198,18 +1243,14 @@ function loadEvents() {
     const all = JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
     const user = getCurrentUser();
     if (!user) return all;
-    return all.filter((e) => e.userId === user.id || !e.userId);
+    return all.filter((e) => !e.userId || e.userId === user.id);
   } catch {
     return [];
   }
 }
 
 function saveEvents(events) {
-  const user = getCurrentUser();
-  const all = JSON.parse(localStorage.getItem(EVENTS_KEY) || "[]");
-  const others = user ? all.filter((e) => e.userId && e.userId !== user.id) : [];
-  const tagged = events.map((e) => ({ ...e, userId: e.userId || user?.id || null }));
-  localStorage.setItem(EVENTS_KEY, JSON.stringify([...tagged, ...others]));
+  localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
 }
 
 function normalizeEventDate(raw) {
@@ -1245,6 +1286,7 @@ function linkSplitToCalendar(historyEntry) {
     event.splitIds.push(historyEntry.id);
   }
   saveEvents(events);
+  syncEventToCloud(event);
 
   const history = loadHistory();
   const idx = history.findIndex((h) => h.id === historyEntry.id);
@@ -1337,9 +1379,30 @@ eventCreateForm.addEventListener("submit", (e) => {
     createdAt: new Date().toISOString(),
   });
   saveEvents(events);
+  syncEventToCloud(events[0]);
   eventCreateForm.reset();
   renderCalendar();
 });
+
+function syncEventToCloud(event) {
+  if (!getSession()?.access_token) return;
+  fetch("/api/events", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ event }),
+  })
+    .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      if (!ok || !j.event) return;
+      const all = loadEvents();
+      const idx = all.findIndex((e) => e.id === event.id || (e.title === j.event.title && e.date === j.event.date));
+      if (idx >= 0) {
+        all[idx] = { ...all[idx], ...j.event };
+        saveEvents(all);
+      }
+    })
+    .catch(() => {});
+}
 
 /* ── Grounded chatbot (stored totals only) ── */
 function ensureChatWelcome() {
@@ -1586,7 +1649,10 @@ function renderHistory() {
 }
 
 /* ── Boot ── */
-(function boot() {
-  if (getCurrentUser()) showApp();
-  else showAuth();
+(async function boot() {
+  if (getSession()?.access_token && getCurrentUser()) {
+    await showApp();
+  } else {
+    showAuth();
+  }
 })();
