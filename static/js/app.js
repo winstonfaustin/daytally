@@ -98,6 +98,7 @@ const authRegisterForm = document.getElementById("auth-register-form");
 const authError = document.getElementById("auth-error");
 const userChipName = document.getElementById("user-chip-name");
 const btnLogout = document.getElementById("btn-logout");
+const btnGoogle = document.getElementById("btn-google");
 const editPayer = document.getElementById("edit-payer");
 const payerBanner = document.getElementById("payer-banner");
 
@@ -1182,6 +1183,46 @@ btnLogout.addEventListener("click", () => {
   showAuth();
 });
 
+if (btnGoogle) {
+  btnGoogle.addEventListener("click", async () => {
+    showAuthError("");
+    try {
+      const redirectTo = `${window.location.origin}/`;
+      const res = await fetch(`/api/auth/google?redirect_to=${encodeURIComponent(redirectTo)}`);
+      const payload = await res.json();
+      if (!res.ok || !payload.url) throw new Error(payload.error || "Could not start Google sign-in.");
+      window.location.href = payload.url;
+    } catch (err) {
+      showAuthError(err.message || "Could not start Google sign-in.");
+    }
+  });
+}
+
+async function completeOAuthFromUrl() {
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  if (!hash) return false;
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get("access_token");
+  const refreshToken = params.get("refresh_token") || "";
+  if (!accessToken) return false;
+  const res = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    }),
+  });
+  const payload = await res.json();
+  history.replaceState({}, document.title, window.location.pathname + window.location.search);
+  if (!res.ok) throw new Error(payload.error || "Google sign-in failed.");
+  setSession(payload);
+  await showApp();
+  return true;
+}
+
 /* ── History (local cache + Supabase) ── */
 function saveToHistory(data) {
   const history = loadHistory();
@@ -1650,6 +1691,13 @@ function renderHistory() {
 
 /* ── Boot ── */
 (async function boot() {
+  try {
+    if (await completeOAuthFromUrl()) return;
+  } catch (err) {
+    showAuth();
+    showAuthError(err.message || "Google sign-in failed.");
+    return;
+  }
   if (getSession()?.access_token && getCurrentUser()) {
     await showApp();
   } else {

@@ -97,6 +97,36 @@ def auth_login():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/api/auth/google", methods=["GET"])
+def auth_google():
+    redirect_to = (request.args.get("redirect_to") or request.host_url or "").strip()
+    if not redirect_to:
+        return jsonify({"error": "Missing redirect_to."}), 400
+    try:
+        url = sb.google_oauth_url(redirect_to)
+        return jsonify({"success": True, "url": url})
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/session", methods=["POST"])
+def auth_session():
+    body = request.get_json(silent=True) or {}
+    access_token = str(body.get("access_token") or "").strip()
+    refresh_token = str(body.get("refresh_token") or "").strip()
+    if not access_token:
+        return jsonify({"error": "Missing access token."}), 400
+    try:
+        payload = sb.session_from_access_token(access_token, refresh_token)
+        return jsonify({"success": True, **payload})
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/api/splits", methods=["GET"])
 def get_splits():
     try:

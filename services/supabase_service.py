@@ -117,15 +117,40 @@ def login_user(email: str, password: str) -> dict[str, Any]:
         raise ValueError("Login failed. Check email and password.")
 
     display_name = _display_name_for(user)
+    _ensure_profile(user.id, display_name)
+    return _session_payload(user, session, display_name)
+
+
+def google_oauth_url(redirect_to: str) -> str:
+    from urllib.parse import urlencode
+
+    url = _env("SUPABASE_URL").rstrip("/")
+    if not url:
+        raise SupabaseNotConfigured(_missing_message())
+    # Also ensure anon client can be created (validates keys).
+    get_anon_client()
+    qs = urlencode({"provider": "google", "redirect_to": redirect_to})
+    return f"{url}/auth/v1/authorize?{qs}"
+
+
+def session_from_access_token(access_token: str, refresh_token: str = "") -> dict[str, Any]:
+    user_info = user_from_token(access_token)
+    _ensure_profile(user_info["id"], user_info["name"])
+    return {
+        "user": user_info,
+        "access_token": access_token,
+        "refresh_token": refresh_token or "",
+    }
+
+
+def _ensure_profile(user_id: str, display_name: str) -> None:
     try:
         admin = get_admin_client()
         admin.table("profiles").upsert(
-            {"id": user.id, "display_name": display_name}
+            {"id": user_id, "display_name": display_name or "User"}
         ).execute()
     except Exception:
         pass
-
-    return _session_payload(user, session, display_name)
 
 
 def user_from_token(access_token: str) -> dict[str, Any]:
@@ -250,7 +275,12 @@ def list_events(user_id: str) -> list[dict[str, Any]]:
 def _display_name_for(user: Any) -> str:
     meta = getattr(user, "user_metadata", None) or {}
     if isinstance(meta, dict):
-        name = (meta.get("display_name") or meta.get("name") or "").strip()
+        name = (
+            meta.get("display_name")
+            or meta.get("full_name")
+            or meta.get("name")
+            or ""
+        ).strip()
         if name:
             return name
     email = getattr(user, "email", None) or ""
