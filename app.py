@@ -127,6 +127,37 @@ def auth_session():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/api/auth/profile", methods=["GET"])
+def auth_profile_get():
+    try:
+        user = _require_user()
+        profile = sb.get_profile(user["id"])
+        return jsonify({"success": True, "user": profile})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/profile", methods=["PATCH", "POST"])
+def auth_profile_update():
+    body = request.get_json(silent=True) or {}
+    try:
+        user = _require_user()
+        profile = sb.update_profile(user["id"], body)
+        return jsonify({"success": True, "user": profile})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/api/splits", methods=["GET"])
 def get_splits():
     try:

@@ -8,6 +8,7 @@ const state = {
   confirmedData: null,
   gstPercent: 0,
   svcPercent: 0,
+  selectedPaymentId: "",
 };
 
 const HISTORY_KEY = "daytally_history";
@@ -20,10 +21,12 @@ const viewNew = document.getElementById("view-new");
 const viewHistory = document.getElementById("view-history");
 const viewCalendar = document.getElementById("view-calendar");
 const viewChat = document.getElementById("view-chat");
+const viewProfile = document.getElementById("view-profile");
 const navNew = document.getElementById("nav-new");
 const navHistory = document.getElementById("nav-history");
 const navCalendar = document.getElementById("nav-calendar");
 const navChat = document.getElementById("nav-chat");
+const navProfile = document.getElementById("nav-profile");
 const wizardSteps = document.querySelectorAll(".wizard-step");
 
 const stepReceipt = document.getElementById("step-receipt");
@@ -101,6 +104,15 @@ const btnLogout = document.getElementById("btn-logout");
 const btnGoogle = document.getElementById("btn-google");
 const editPayer = document.getElementById("edit-payer");
 const payerBanner = document.getElementById("payer-banner");
+const profileForm = document.getElementById("profile-form");
+const profileName = document.getElementById("profile-name");
+const profileEmail = document.getElementById("profile-email");
+const paymentProfilesList = document.getElementById("payment-profiles-list");
+const btnAddPayment = document.getElementById("btn-add-payment");
+const profileError = document.getElementById("profile-error");
+const profileSaved = document.getElementById("profile-saved");
+const sharePayField = document.getElementById("share-pay-field");
+const sharePaymentProfile = document.getElementById("share-payment-profile");
 
 state.lastHistoryId = null;
 state.lastEventId = null;
@@ -265,19 +277,23 @@ function switchView(view) {
   viewHistory.classList.toggle("hidden", view !== "history");
   viewCalendar.classList.toggle("hidden", view !== "calendar");
   viewChat.classList.toggle("hidden", view !== "chat");
+  if (viewProfile) viewProfile.classList.toggle("hidden", view !== "profile");
   navNew.classList.toggle("active", view === "new");
   navHistory.classList.toggle("active", view === "history");
   navCalendar.classList.toggle("active", view === "calendar");
   navChat.classList.toggle("active", view === "chat");
+  if (navProfile) navProfile.classList.toggle("active", view === "profile");
   if (view === "history") renderHistory();
   if (view === "calendar") renderCalendar();
   if (view === "chat") ensureChatWelcome();
+  if (view === "profile") fillProfileForm();
 }
 
 navNew.addEventListener("click", () => switchView("new"));
 navHistory.addEventListener("click", () => switchView("history"));
 navCalendar.addEventListener("click", () => switchView("calendar"));
 navChat.addEventListener("click", () => switchView("chat"));
+if (navProfile) navProfile.addEventListener("click", () => switchView("profile"));
 btnOpenCalendar.addEventListener("click", () => switchView("calendar"));
 
 /* ── Receipt step ── */
@@ -861,6 +877,7 @@ function renderResults(data) {
   const { event_details: event, receipt_summary: summary, participants } = data;
   const currency = event.currency;
   const payer = data.paid_by || "";
+  syncSharePaymentSelect(data);
 
   document.getElementById("event-title").textContent = event.title;
   document.getElementById("event-date").textContent = event.date;
@@ -946,6 +963,8 @@ function buildSummaryText(data) {
     });
     text += `  (tax & service: ${formatMoney(p.tax_and_tip_share, c)})\n`;
   });
+  const payBlock = paymentDetailsBlock(payer);
+  if (payBlock) text += `\n${payBlock}`;
   return text.trim();
 }
 
@@ -963,7 +982,68 @@ function buildPersonMessage(data, person) {
     text += `• ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
   });
   text += `• Tax & service: ${formatMoney(person.tax_and_tip_share, c)}`;
+  if (payer && !namesMatch(person.name, payer)) {
+    const payBlock = paymentDetailsBlock(payer);
+    if (payBlock) text += `\n\n${payBlock}`;
+  }
   return text;
+}
+
+function getSelectedPaymentProfile() {
+  const user = getCurrentUser();
+  const profiles = Array.isArray(user?.payment_profiles) ? user.payment_profiles : [];
+  if (!profiles.length) return null;
+  const id = state.selectedPaymentId || user.default_payment_id || profiles[0].id;
+  return profiles.find((p) => p.id === id) || profiles[0];
+}
+
+function paymentDetailsBlock(payer) {
+  const user = getCurrentUser();
+  if (!user || !payer || !namesMatch(user.name, payer)) return "";
+  const profile = getSelectedPaymentProfile();
+  if (!profile) return "";
+  const lines = [];
+  if (profile.label) lines.push(profile.label);
+  if (profile.method) lines.push(`Pay via: ${profile.method}`);
+  if (profile.handle) lines.push(`Handle / number: ${profile.handle}`);
+  if (profile.bank_name) lines.push(`Bank: ${profile.bank_name}`);
+  if (profile.account_number) lines.push(`Account: ${profile.account_number}`);
+  if (profile.note) lines.push(profile.note);
+  if (lines.length <= (profile.label ? 1 : 0)) return "";
+  return `How to pay ${user.name}:\n${lines.map((l) => `• ${l}`).join("\n")}`;
+}
+
+function syncSharePaymentSelect(data) {
+  if (!sharePayField || !sharePaymentProfile) return;
+  const user = getCurrentUser();
+  const profiles = Array.isArray(user?.payment_profiles) ? user.payment_profiles : [];
+  const show =
+    !!data?.paid_by &&
+    !!user?.name &&
+    namesMatch(data.paid_by, user.name) &&
+    profiles.length > 0;
+  sharePayField.classList.toggle("hidden", !show);
+  if (!show) return;
+  const selected =
+    state.selectedPaymentId ||
+    user.default_payment_id ||
+    profiles[0]?.id ||
+    "";
+  state.selectedPaymentId = selected;
+  sharePaymentProfile.innerHTML = profiles
+    .map(
+      (p) =>
+        `<option value="${escapeHtml(p.id)}"${p.id === selected ? " selected" : ""}>${escapeHtml(
+          p.label || p.method || "Payment"
+        )}</option>`
+    )
+    .join("");
+}
+
+if (sharePaymentProfile) {
+  sharePaymentProfile.addEventListener("change", () => {
+    state.selectedPaymentId = sharePaymentProfile.value;
+  });
 }
 
 async function copyText(text) {
@@ -1073,6 +1153,7 @@ function showAuthError(msg) {
 async function showApp() {
   authScreen.classList.add("hidden");
   appShell.classList.remove("hidden");
+  await refreshProfileFromCloud();
   const user = getCurrentUser();
   if (userChipName) userChipName.textContent = user ? user.name || user.email : "Guest";
   await refreshCloudData();
@@ -1082,6 +1163,204 @@ function showAuth() {
   appShell.classList.add("hidden");
   authScreen.classList.remove("hidden");
   showAuthError("");
+}
+
+function fillProfileForm() {
+  const user = getCurrentUser() || {};
+  if (profileName) profileName.value = user.name || "";
+  if (profileEmail) profileEmail.value = user.email || "";
+  renderPaymentProfileEditors(
+    Array.isArray(user.payment_profiles) ? user.payment_profiles : [],
+    user.default_payment_id || ""
+  );
+  if (profileError) {
+    profileError.textContent = "";
+    profileError.classList.add("hidden");
+  }
+  if (profileSaved) profileSaved.classList.add("hidden");
+}
+
+function newPaymentId() {
+  return `pay_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function emptyPaymentProfile() {
+  return {
+    id: newPaymentId(),
+    label: "",
+    method: "PayNow",
+    handle: "",
+    bank_name: "",
+    account_number: "",
+    note: "",
+  };
+}
+
+function renderPaymentProfileEditors(profiles, defaultId) {
+  if (!paymentProfilesList) return;
+  const list = profiles.length ? profiles : [emptyPaymentProfile()];
+  const def = defaultId || list[0]?.id || "";
+  paymentProfilesList.innerHTML = "";
+  list.forEach((p) => {
+    paymentProfilesList.appendChild(buildPaymentProfileCard(p, p.id === def));
+  });
+}
+
+function buildPaymentProfileCard(profile, isDefault) {
+  const card = document.createElement("div");
+  card.className = "payment-profile-card";
+  card.dataset.id = profile.id;
+  card.innerHTML = `
+    <div class="profile-pay-top">
+      <label class="default-pay-label">
+        <input type="radio" name="default-payment" class="pay-default" ${isDefault ? "checked" : ""}>
+        Default
+      </label>
+      <button type="button" class="btn-text btn-remove-pay">Remove</button>
+    </div>
+    <div class="edit-row">
+      <div class="edit-field">
+        <label>Label</label>
+        <input type="text" class="pay-label" maxlength="40" placeholder="SG PayNow / IDR BCA" value="${escapeHtml(profile.label || "")}">
+      </div>
+      <div class="edit-field">
+        <label>Method</label>
+        <select class="pay-method">
+          ${["PayNow", "Bank transfer", "PayLah", "GrabPay", "QRIS", "Cash", "Other"]
+            .map(
+              (m) =>
+                `<option value="${m}"${(profile.method || "") === m ? " selected" : ""}>${m}</option>`
+            )
+            .join("")}
+        </select>
+      </div>
+    </div>
+    <div class="edit-field">
+      <label>Handle / phone / QR id</label>
+      <input type="text" class="pay-handle" maxlength="80" placeholder="+65… or QRIS id" value="${escapeHtml(profile.handle || "")}">
+    </div>
+    <div class="edit-row">
+      <div class="edit-field">
+        <label>Bank name</label>
+        <input type="text" class="pay-bank" maxlength="80" placeholder="DBS / BCA…" value="${escapeHtml(profile.bank_name || "")}">
+      </div>
+      <div class="edit-field">
+        <label>Account number</label>
+        <input type="text" class="pay-account" maxlength="80" value="${escapeHtml(profile.account_number || "")}">
+      </div>
+    </div>
+    <div class="edit-field">
+      <label>Note</label>
+      <textarea class="pay-note" maxlength="200" rows="2" placeholder="a.n. Winston">${escapeHtml(profile.note || "")}</textarea>
+    </div>
+  `;
+  card.querySelector(".btn-remove-pay").addEventListener("click", () => {
+    const cards = paymentProfilesList.querySelectorAll(".payment-profile-card");
+    if (cards.length <= 1) {
+      renderPaymentProfileEditors([emptyPaymentProfile()], "");
+      return;
+    }
+    const wasDefault = card.querySelector(".pay-default")?.checked;
+    card.remove();
+    if (wasDefault) {
+      const first = paymentProfilesList.querySelector(".pay-default");
+      if (first) first.checked = true;
+    }
+  });
+  return card;
+}
+
+function collectPaymentProfilesFromForm() {
+  if (!paymentProfilesList) return { payment_profiles: [], default_payment_id: "" };
+  const cards = [...paymentProfilesList.querySelectorAll(".payment-profile-card")];
+  const payment_profiles = cards
+    .map((card) => ({
+      id: card.dataset.id || newPaymentId(),
+      label: card.querySelector(".pay-label")?.value.trim() || "",
+      method: card.querySelector(".pay-method")?.value || "",
+      handle: card.querySelector(".pay-handle")?.value.trim() || "",
+      bank_name: card.querySelector(".pay-bank")?.value.trim() || "",
+      account_number: card.querySelector(".pay-account")?.value.trim() || "",
+      note: card.querySelector(".pay-note")?.value.trim() || "",
+    }))
+    .filter((p) => p.label || p.method || p.handle || p.bank_name || p.account_number || p.note);
+  let default_payment_id = "";
+  const checked = paymentProfilesList.querySelector(".pay-default:checked");
+  if (checked) {
+    default_payment_id = checked.closest(".payment-profile-card")?.dataset.id || "";
+  }
+  if (!default_payment_id && payment_profiles[0]) default_payment_id = payment_profiles[0].id;
+  return { payment_profiles, default_payment_id };
+}
+
+if (btnAddPayment) {
+  btnAddPayment.addEventListener("click", () => {
+    if (!paymentProfilesList) return;
+    if (paymentProfilesList.querySelectorAll(".payment-profile-card").length >= 8) {
+      showToast("Max 8 payment methods.");
+      return;
+    }
+    paymentProfilesList.appendChild(buildPaymentProfileCard(emptyPaymentProfile(), false));
+  });
+}
+
+async function refreshProfileFromCloud() {
+  if (!getSession()?.access_token) return;
+  try {
+    const res = await fetch("/api/auth/profile", { headers: authHeaders() });
+    const payload = await res.json();
+    if (!res.ok || !payload.user) return;
+    const session = getSession();
+    if (!session) return;
+    session.user = payload.user;
+    setSession(session);
+    if (!state.selectedPaymentId && payload.user.default_payment_id) {
+      state.selectedPaymentId = payload.user.default_payment_id;
+    }
+  } catch {
+    /* keep local session */
+  }
+}
+
+if (profileForm) {
+  profileForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (profileError) {
+      profileError.textContent = "";
+      profileError.classList.add("hidden");
+    }
+    if (profileSaved) profileSaved.classList.add("hidden");
+    const pay = collectPaymentProfilesFromForm();
+    const body = {
+      name: (profileName?.value || "").trim(),
+      payment_profiles: pay.payment_profiles,
+      default_payment_id: pay.default_payment_id,
+    };
+    try {
+      const res = await fetch("/api/auth/profile", {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || "Could not save profile.");
+      const session = getSession();
+      setSession({
+        user: payload.user,
+        access_token: session?.access_token,
+        refresh_token: session?.refresh_token || "",
+      });
+      state.selectedPaymentId = payload.user.default_payment_id || state.selectedPaymentId;
+      fillProfileForm();
+      if (profileSaved) profileSaved.classList.remove("hidden");
+      showToast("Profile saved!");
+    } catch (err) {
+      if (profileError) {
+        profileError.textContent = err.message || "Could not save profile.";
+        profileError.classList.remove("hidden");
+      }
+    }
+  });
 }
 
 async function refreshCloudData() {

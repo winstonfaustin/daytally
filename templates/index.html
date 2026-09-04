@@ -29,6 +29,7 @@
           <button type="button" class="nav-btn" id="nav-history" data-view="history">History</button>
           <button type="button" class="nav-btn" id="nav-calendar" data-view="calendar">Calendar</button>
           <button type="button" class="nav-btn" id="nav-chat" data-view="chat">Chatbot</button>
+          <button type="button" class="nav-btn" id="nav-profile" data-view="profile">Profile</button>
         </nav>
       </div>
     </header>
@@ -242,6 +243,11 @@
 
         <div class="share-bar card">
           <h3 class="section-title">Share with the group</h3>
+          <div class="edit-field share-pay-field hidden" id="share-pay-field">
+            <label for="share-payment-profile">Include payment details</label>
+            <select id="share-payment-profile"></select>
+            <p class="field-hint">Pick SG PayNow, IDR bank, etc. Add more under Profile.</p>
+          </div>
           <div class="share-buttons">
             <button type="button" class="btn-secondary" id="btn-copy-all">Copy full summary</button>
             <button type="button" class="btn-secondary" id="btn-share-native">Share…</button>
@@ -324,6 +330,40 @@
         <form class="chat-form" id="chat-form">
           <input type="text" id="chat-input" maxlength="200" placeholder="e.g. What do I owe Mevan?" autocomplete="off">
           <button type="submit" class="btn-primary" id="btn-chat-send">Ask</button>
+        </form>
+      </section>
+    </main>
+
+    <!-- Profile view -->
+    <main class="main hidden" id="view-profile">
+      <section class="card">
+        <h3 class="panel-title">Your profile</h3>
+        <p class="panel-desc">Set the name DayTally uses for “you”, and save multiple ways friends can pay you (e.g. PayNow in SGD, bank transfer in IDR).</p>
+
+        <form id="profile-form" class="profile-form">
+          <div class="edit-field">
+            <label for="profile-name">Display name</label>
+            <input type="text" id="profile-name" maxlength="40" required placeholder="How friends know you on receipts">
+            <p class="field-hint">Used for “who paid”, chatbot “what do I owe?”, and matching your share. Does not need to match Google.</p>
+          </div>
+
+          <div class="edit-field">
+            <label for="profile-email">Email</label>
+            <input type="email" id="profile-email" readonly>
+          </div>
+
+          <div class="profile-pay-section">
+            <h4 class="section-title">Payment methods</h4>
+            <p class="panel-desc">Add one or more. When you share a split, choose which one to include.</p>
+            <div id="payment-profiles-list" class="payment-profiles-list"></div>
+            <button type="button" class="btn-secondary" id="btn-add-payment">Add payment method</button>
+          </div>
+
+          <p class="auth-error hidden" id="profile-error" role="alert"></p>
+          <p class="field-hint hidden" id="profile-saved">Profile saved.</p>
+          <div class="btn-row">
+            <button type="submit" class="btn-primary" id="btn-save-profile">Save profile</button>
+          </div>
         </form>
       </section>
     </main>
