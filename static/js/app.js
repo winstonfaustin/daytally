@@ -678,15 +678,16 @@ function fillPayerSelect(data) {
     opt.textContent = person.name + (me && namesMatch(person.name, me) ? " (you)" : "");
     editPayer.appendChild(opt);
   });
-  if (current && data.participants.some((p) => p.name === current)) {
-    editPayer.value = current;
-  } else if (me && data.participants.some((p) => namesMatch(p.name, me))) {
-    const match = data.participants.find((p) => namesMatch(p.name, me));
-    editPayer.value = match.name;
-    data.paid_by = match.name;
-  } else if (data.participants[0]) {
-    editPayer.value = data.participants[0].name;
-    data.paid_by = data.participants[0].name;
+  // Prefer an already-set payer (from draft); never auto-force "you".
+  const matched = current
+    ? data.participants.find((p) => namesMatch(p.name, current))
+    : null;
+  if (matched) {
+    editPayer.value = matched.name;
+    data.paid_by = matched.name;
+  } else {
+    editPayer.value = "";
+    data.paid_by = "";
   }
 }
 
@@ -1386,6 +1387,7 @@ async function refreshCloudData() {
     if (eventsRes.ok && Array.isArray(eventsJson.events)) {
       localStorage.setItem(EVENTS_KEY, JSON.stringify(eventsJson.events));
     }
+    rebuildCalendarLinks();
   } catch {
     /* keep local cache if offline */
   }
@@ -1503,6 +1505,78 @@ async function completeOAuthFromUrl() {
 }
 
 /* ── History (local cache + Supabase) ── */
+function remapSplitIdInEvents(oldId, newId) {
+  if (!oldId || !newId || oldId === newId) return;
+  const events = loadEvents();
+  let changed = false;
+  events.forEach((e) => {
+    if (!Array.isArray(e.splitIds)) return;
+    const idx = e.splitIds.indexOf(oldId);
+    if (idx < 0) return;
+    e.splitIds[idx] = newId;
+    changed = true;
+    syncEventToCloud(e);
+  });
+  if (changed) saveEvents(events);
+}
+
+function remapHistoryEventId(oldId, newId) {
+  if (!oldId || !newId || oldId === newId) return;
+  const history = loadHistory();
+  let changed = false;
+  history.forEach((h) => {
+    if (h.eventId === oldId) {
+      h.eventId = newId;
+      changed = true;
+    }
+  });
+  if (changed) saveHistory(history);
+}
+
+function rebuildCalendarLinks() {
+  const history = loadHistory();
+  const events = loadEvents();
+  let changedH = false;
+  let changedE = false;
+
+  history.forEach((h) => {
+    const title = (h.data?.event_details?.title || "").trim().toLowerCase();
+    const date = normalizeEventDate(h.data?.event_details?.date);
+    let event = h.eventId ? events.find((e) => e.id === h.eventId) : null;
+    if (!event && title) {
+      event = events.find(
+        (e) => String(e.title || "").toLowerCase() === title && e.date === date
+      );
+    }
+    if (!event) return;
+    if (h.eventId !== event.id) {
+      h.eventId = event.id;
+      changedH = true;
+    }
+    if (!Array.isArray(event.splitIds)) event.splitIds = [];
+    if (!event.splitIds.includes(h.id)) {
+      event.splitIds.push(h.id);
+      changedE = true;
+    }
+  });
+
+  events.forEach((e) => {
+    if (!Array.isArray(e.splitIds)) e.splitIds = [];
+    const before = e.splitIds.slice();
+    const ids = new Set(e.splitIds.filter((id) => history.some((h) => h.id === id)));
+    history.forEach((h) => {
+      if (h.eventId === e.id) ids.add(h.id);
+    });
+    e.splitIds = [...ids];
+    if (e.splitIds.length !== before.length || e.splitIds.some((id, i) => id !== before[i])) {
+      changedE = true;
+    }
+  });
+
+  if (changedH) saveHistory(history);
+  if (changedE) saveEvents(events);
+}
+
 function saveToHistory(data) {
   const history = loadHistory();
   const user = getCurrentUser();
@@ -1519,24 +1593,28 @@ function saveToHistory(data) {
 
   const token = getSession()?.access_token;
   if (token) {
+    const localId = entry.id;
     fetch("/api/splits", {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ data, local_id: entry.id }),
+      body: JSON.stringify({ data, local_id: localId }),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (!ok || !j.split) return;
+        const newId = j.split.id;
         const all = loadHistory();
-        const idx = all.findIndex((h) => h.id === entry.id);
+        const idx = all.findIndex((h) => h.id === localId || h.id === newId);
         if (idx >= 0) {
-          all[idx].id = j.split.id;
+          all[idx].id = newId;
           all[idx].cloud = true;
           all[idx].savedAt = j.split.savedAt || all[idx].savedAt;
           localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
         }
-        entry.id = j.split.id;
+        entry.id = newId;
         entry.cloud = true;
+        remapSplitIdInEvents(localId, newId);
+        rebuildCalendarLinks();
       })
       .catch(() => {});
   }
@@ -1619,12 +1697,30 @@ function linkSplitToCalendar(historyEntry) {
 
 function getSplitsForEvent(event) {
   const history = loadHistory();
-  return (event.splitIds || [])
-    .map((id) => history.find((h) => h.id === id))
-    .filter(Boolean);
+  const byId = new Map();
+  (event.splitIds || []).forEach((id) => {
+    const hit = history.find((h) => h.id === id);
+    if (hit) byId.set(hit.id, hit);
+  });
+  history.forEach((h) => {
+    if (h.eventId === event.id) byId.set(h.id, h);
+  });
+  const title = String(event.title || "")
+    .trim()
+    .toLowerCase();
+  const date = event.date;
+  if (title && date) {
+    history.forEach((h) => {
+      const hTitle = (h.data?.event_details?.title || "").trim().toLowerCase();
+      const hDate = normalizeEventDate(h.data?.event_details?.date);
+      if (hTitle === title && hDate === date) byId.set(h.id, h);
+    });
+  }
+  return [...byId.values()];
 }
 
 function renderCalendar() {
+  rebuildCalendarLinks();
   const events = loadEvents().slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
   eventList.innerHTML = "";
   eventEmpty.classList.toggle("hidden", events.length > 0);
@@ -1706,6 +1802,7 @@ eventCreateForm.addEventListener("submit", (e) => {
 
 function syncEventToCloud(event) {
   if (!getSession()?.access_token) return;
+  const localId = event.id;
   fetch("/api/events", {
     method: "POST",
     headers: authHeaders(),
@@ -1715,11 +1812,18 @@ function syncEventToCloud(event) {
     .then(({ ok, j }) => {
       if (!ok || !j.event) return;
       const all = loadEvents();
-      const idx = all.findIndex((e) => e.id === event.id || (e.title === j.event.title && e.date === j.event.date));
+      const idx = all.findIndex(
+        (e) => e.id === localId || (e.title === j.event.title && e.date === j.event.date)
+      );
       if (idx >= 0) {
-        all[idx] = { ...all[idx], ...j.event };
+        const mergedSplitIds = [
+          ...new Set([...(all[idx].splitIds || []), ...(j.event.splitIds || []), ...(event.splitIds || [])]),
+        ];
+        all[idx] = { ...all[idx], ...j.event, splitIds: mergedSplitIds };
         saveEvents(all);
       }
+      remapHistoryEventId(localId, j.event.id);
+      rebuildCalendarLinks();
     })
     .catch(() => {});
 }
@@ -1766,10 +1870,20 @@ function answerChat(question) {
     return events
       .slice(0, 8)
       .map((e) => {
-        const n = (e.splitIds || []).length;
+        const n = getSplitsForEvent(e).length;
         return `• ${e.title} (${e.date}) — ${n} linked bill${n === 1 ? "" : "s"}`;
       })
       .join("\n");
+  }
+
+  if (/who paid|paid first|who fronted/.test(q)) {
+    const last = history[0];
+    if (!last) return "No splits saved yet.";
+    const payer = last.data.paid_by || "";
+    if (!payer) {
+      return `Your latest split “${last.data.event_details.title}” has no payer set. Open it from History, or make a new split and choose “Who paid first” on Review before confirming.`;
+    }
+    return `On “${last.data.event_details.title}” (${last.data.event_details.date}), ${payer} was marked as who paid first. The chatbot cannot change that — edit “Who paid first” on Review before you confirm, or delete and re-confirm the split.`;
   }
 
   if (/last split|most recent|latest bill/.test(q)) {
@@ -1830,7 +1944,17 @@ function answerChat(question) {
         });
       });
       if (!debts.length) {
-        return `I found no open shares for ${me}. Either you were not on those bills, or you were marked as who paid first.`;
+        const asPayer = history.filter(
+          (h) => h.data.paid_by && namesMatch(h.data.paid_by, me)
+        );
+        if (asPayer.length) {
+          const samples = asPayer
+            .slice(0, 3)
+            .map((h) => `“${h.data.event_details.title}”`)
+            .join(", ");
+          return `You (${me}) were marked as who paid first on ${asPayer.length} bill(s), so you do not owe anyone on those (e.g. ${samples}). If someone else paid (e.g. Jovan), set “Who paid first” to them on the Review step before confirming — the chatbot cannot change an already saved payer.`;
+        }
+        return `I found no open shares for ${me}. You may not be listed as a participant on saved bills, or payer was not set. Check History and your display name under Profile.`;
       }
       const byPayee = {};
       debts.forEach((row) => {
