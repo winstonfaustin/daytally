@@ -722,7 +722,14 @@ function buildEditParticipantCard(data, person, pIdx) {
   `;
 
   card.querySelector(".edit-participant-name").addEventListener("input", (e) => {
-    data.participants[pIdx].name = e.target.value;
+    const oldName = data.participants[pIdx].name;
+    const newName = e.target.value;
+    const payerWasThis =
+      (data.paid_by && namesMatch(data.paid_by, oldName)) ||
+      (editPayer?.value && namesMatch(editPayer.value, oldName));
+    data.participants[pIdx].name = newName;
+    if (payerWasThis) data.paid_by = newName;
+    fillPayerSelect(data);
   });
 
   card.querySelector(".edit-tax-share").addEventListener("input", (e) => {
