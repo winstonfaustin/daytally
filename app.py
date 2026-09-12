@@ -158,6 +158,23 @@ def auth_profile_update():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.route("/api/users/payment-methods", methods=["GET"])
+def users_payment_methods():
+    email = str(request.args.get("email") or "").strip().lower()
+    try:
+        _require_user()
+        payload = sb.lookup_payment_methods_by_email(email)
+        return jsonify({"success": True, **payload})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/api/splits", methods=["GET"])
 def get_splits():
     try:

@@ -9,6 +9,8 @@ const state = {
   gstPercent: 0,
   svcPercent: 0,
   selectedPaymentId: "",
+  settleProfiles: [],
+  settleFriend: null,
 };
 
 const HISTORY_KEY = "daytally_history";
@@ -113,6 +115,20 @@ const profileError = document.getElementById("profile-error");
 const profileSaved = document.getElementById("profile-saved");
 const sharePayField = document.getElementById("share-pay-field");
 const sharePaymentProfile = document.getElementById("share-payment-profile");
+const settleSource = document.getElementById("settle-source");
+const settleFriendRow = document.getElementById("settle-friend-row");
+const settleFriendEmail = document.getElementById("settle-friend-email");
+const btnLookupFriendPay = document.getElementById("btn-lookup-friend-pay");
+const settleFriendStatus = document.getElementById("settle-friend-status");
+const settleMethodField = document.getElementById("settle-method-field");
+const settleMethodSelect = document.getElementById("settle-method-select");
+const settleManual = document.getElementById("settle-manual");
+const settleLabel = document.getElementById("settle-label");
+const settleMethod = document.getElementById("settle-method");
+const settleHandle = document.getElementById("settle-handle");
+const settleBank = document.getElementById("settle-bank");
+const settleAccount = document.getElementById("settle-account");
+const settleNote = document.getElementById("settle-note");
 
 state.lastHistoryId = null;
 state.lastEventId = null;
@@ -689,6 +705,150 @@ function fillPayerSelect(data) {
     editPayer.value = "";
     data.paid_by = "";
   }
+  syncSettlePayUI();
+}
+
+function fillSettleMethodSelect(profiles, preferredId) {
+  if (!settleMethodSelect) return;
+  const list = Array.isArray(profiles) ? profiles : [];
+  settleMethodSelect.innerHTML = list.length
+    ? list
+        .map(
+          (p) =>
+            `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label || p.method || "Payment")}</option>`
+        )
+        .join("")
+    : '<option value="">No saved methods</option>';
+  if (preferredId && list.some((p) => p.id === preferredId)) {
+    settleMethodSelect.value = preferredId;
+  } else if (list[0]) {
+    settleMethodSelect.value = list[0].id;
+  }
+}
+
+function syncSettlePayUI() {
+  if (!settleSource) return;
+  const source = settleSource.value;
+  const me = getCurrentUser();
+  const payerIsMe =
+    !!editPayer?.value && !!me?.name && namesMatch(editPayer.value, me.name);
+
+  if (settleFriendRow) settleFriendRow.classList.toggle("hidden", source !== "friend");
+  if (settleManual) settleManual.classList.toggle("hidden", source !== "manual");
+
+  if (source === "self") {
+    state.settleProfiles = Array.isArray(me?.payment_profiles) ? me.payment_profiles : [];
+    state.settleFriend = me
+      ? { name: me.name, email: me.email || "" }
+      : null;
+    fillSettleMethodSelect(state.settleProfiles, me?.default_payment_id);
+    if (settleMethodField) settleMethodField.classList.toggle("hidden", !state.settleProfiles.length);
+    if (!state.settleProfiles.length && settleFriendStatus) {
+      settleFriendStatus.textContent = "Save payment methods under Profile first.";
+    } else if (settleFriendStatus && payerIsMe) {
+      settleFriendStatus.textContent = "";
+    }
+  } else if (source === "friend") {
+    const profiles = state.settleProfiles || [];
+    fillSettleMethodSelect(profiles, state.settleFriend?.default_payment_id);
+    if (settleMethodField) settleMethodField.classList.toggle("hidden", !profiles.length);
+  } else if (source === "manual") {
+    if (settleMethodField) settleMethodField.classList.add("hidden");
+  } else {
+    if (settleMethodField) settleMethodField.classList.add("hidden");
+    if (settleFriendStatus) settleFriendStatus.textContent = "";
+  }
+}
+
+function collectSettlePayment() {
+  const source = settleSource?.value || "none";
+  if (source === "none") return null;
+  const payer = editPayer?.value || "";
+
+  if (source === "manual") {
+    const snap = {
+      source: "manual",
+      owner_name: payer,
+      owner_email: "",
+      label: (settleLabel?.value || "").trim(),
+      method: settleMethod?.value || "",
+      handle: (settleHandle?.value || "").trim(),
+      bank_name: (settleBank?.value || "").trim(),
+      account_number: (settleAccount?.value || "").trim(),
+      note: (settleNote?.value || "").trim(),
+    };
+    if (!snap.method && !snap.handle && !snap.bank_name && !snap.account_number && !snap.note) {
+      return null;
+    }
+    return snap;
+  }
+
+  const profiles = state.settleProfiles || [];
+  const selectedId = settleMethodSelect?.value || "";
+  const profile = profiles.find((p) => p.id === selectedId) || profiles[0];
+  if (!profile) return null;
+  return {
+    source,
+    owner_name: state.settleFriend?.name || payer,
+    owner_email: state.settleFriend?.email || "",
+    id: profile.id,
+    label: profile.label || "",
+    method: profile.method || "",
+    handle: profile.handle || "",
+    bank_name: profile.bank_name || "",
+    account_number: profile.account_number || "",
+    note: profile.note || "",
+  };
+}
+
+async function lookupFriendPaymentMethods() {
+  if (!settleFriendStatus) return;
+  settleFriendStatus.textContent = "Looking up…";
+  const email = (settleFriendEmail?.value || "").trim().toLowerCase();
+  try {
+    const res = await fetch(
+      `/api/users/payment-methods?email=${encodeURIComponent(email)}`,
+      { headers: authHeaders() }
+    );
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || "Lookup failed.");
+    state.settleFriend = {
+      name: payload.name,
+      email: payload.email,
+      default_payment_id: payload.default_payment_id || "",
+    };
+    state.settleProfiles = Array.isArray(payload.payment_profiles)
+      ? payload.payment_profiles
+      : [];
+    fillSettleMethodSelect(state.settleProfiles, state.settleFriend.default_payment_id);
+    if (settleMethodField) {
+      settleMethodField.classList.toggle("hidden", !state.settleProfiles.length);
+    }
+    if (!state.settleProfiles.length) {
+      settleFriendStatus.textContent = `Found ${payload.name}, but they have no saved payment methods yet. Use manual entry or ask them to add methods in Profile.`;
+    } else {
+      settleFriendStatus.textContent = `Found ${payload.name} · ${state.settleProfiles.length} payment method(s).`;
+    }
+  } catch (err) {
+    state.settleProfiles = [];
+    state.settleFriend = null;
+    if (settleMethodField) settleMethodField.classList.add("hidden");
+    settleFriendStatus.textContent = err.message || "Lookup failed.";
+  }
+}
+
+if (settleSource) {
+  settleSource.addEventListener("change", () => {
+    if (settleSource.value !== "friend") {
+      state.settleProfiles = [];
+      state.settleFriend = null;
+      if (settleFriendStatus) settleFriendStatus.textContent = "";
+    }
+    syncSettlePayUI();
+  });
+}
+if (btnLookupFriendPay) {
+  btnLookupFriendPay.addEventListener("click", () => lookupFriendPaymentMethods());
 }
 
 function buildEditParticipantCard(data, person, pIdx) {
@@ -863,6 +1023,9 @@ btnConfirm.addEventListener("click", () => {
   state.draftData.event_details.date = editDate.value;
   state.draftData.event_details.currency = editCurrency.value;
   state.draftData.paid_by = editPayer.value;
+  const settle = collectSettlePayment();
+  if (settle) state.draftData.settle_payment = settle;
+  else delete state.draftData.settle_payment;
   recalcAll(state.draftData);
   state.confirmedData = deepClone(state.draftData);
   const saved = saveToHistory(state.confirmedData);
@@ -878,6 +1041,19 @@ btnConfirm.addEventListener("click", () => {
 
 editPayer.addEventListener("change", () => {
   if (state.draftData) state.draftData.paid_by = editPayer.value;
+  const me = getCurrentUser();
+  if (
+    settleSource &&
+    settleSource.value === "none" &&
+    me?.name &&
+    editPayer.value &&
+    namesMatch(editPayer.value, me.name) &&
+    Array.isArray(me.payment_profiles) &&
+    me.payment_profiles.length
+  ) {
+    settleSource.value = "self";
+  }
+  syncSettlePayUI();
 });
 
 /* ── Results ── */
@@ -971,7 +1147,7 @@ function buildSummaryText(data) {
     });
     text += `  (tax & service: ${formatMoney(p.tax_and_tip_share, c)})\n`;
   });
-  const payBlock = paymentDetailsBlock(payer);
+  const payBlock = formatSettlePaymentBlock(data);
   if (payBlock) text += `\n${payBlock}`;
   return text.trim();
 }
@@ -991,10 +1167,34 @@ function buildPersonMessage(data, person) {
   });
   text += `• Tax & service: ${formatMoney(person.tax_and_tip_share, c)}`;
   if (payer && !namesMatch(person.name, payer)) {
-    const payBlock = paymentDetailsBlock(payer);
+    const payBlock = formatSettlePaymentBlock(data);
     if (payBlock) text += `\n\n${payBlock}`;
   }
   return text;
+}
+
+function formatSettlePaymentBlock(data) {
+  const payer = data?.paid_by || "";
+  if (!payer) return "";
+  let pay = data.settle_payment || null;
+  if (!pay) {
+    const user = getCurrentUser();
+    if (user?.name && namesMatch(user.name, payer)) {
+      pay = getSelectedPaymentProfile();
+      if (pay) pay = { ...pay, owner_name: user.name };
+    }
+  }
+  if (!pay) return "";
+  const owner = pay.owner_name || payer;
+  const lines = [];
+  if (pay.label) lines.push(pay.label);
+  if (pay.method) lines.push(`Pay via: ${pay.method}`);
+  if (pay.handle) lines.push(`Handle / number: ${pay.handle}`);
+  if (pay.bank_name) lines.push(`Bank: ${pay.bank_name}`);
+  if (pay.account_number) lines.push(`Account: ${pay.account_number}`);
+  if (pay.note) lines.push(pay.note);
+  if (lines.length <= (pay.label ? 1 : 0)) return "";
+  return `How to pay ${owner}:\n${lines.map((l) => `• ${l}`).join("\n")}`;
 }
 
 function getSelectedPaymentProfile() {
@@ -1006,23 +1206,16 @@ function getSelectedPaymentProfile() {
 }
 
 function paymentDetailsBlock(payer) {
-  const user = getCurrentUser();
-  if (!user || !payer || !namesMatch(user.name, payer)) return "";
-  const profile = getSelectedPaymentProfile();
-  if (!profile) return "";
-  const lines = [];
-  if (profile.label) lines.push(profile.label);
-  if (profile.method) lines.push(`Pay via: ${profile.method}`);
-  if (profile.handle) lines.push(`Handle / number: ${profile.handle}`);
-  if (profile.bank_name) lines.push(`Bank: ${profile.bank_name}`);
-  if (profile.account_number) lines.push(`Account: ${profile.account_number}`);
-  if (profile.note) lines.push(profile.note);
-  if (lines.length <= (profile.label ? 1 : 0)) return "";
-  return `How to pay ${user.name}:\n${lines.map((l) => `• ${l}`).join("\n")}`;
+  // Back-compat wrapper; prefer formatSettlePaymentBlock(data).
+  return formatSettlePaymentBlock({ paid_by: payer, settle_payment: null });
 }
 
 function syncSharePaymentSelect(data) {
   if (!sharePayField || !sharePaymentProfile) return;
+  if (data?.settle_payment) {
+    sharePayField.classList.add("hidden");
+    return;
+  }
   const user = getCurrentUser();
   const profiles = Array.isArray(user?.payment_profiles) ? user.payment_profiles : [];
   const show =

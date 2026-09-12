@@ -197,6 +197,74 @@
           <p class="field-hint">Everyone else owes this person their share. Makes “what do I owe?” clear in the chatbot.</p>
         </div>
 
+        <div class="settle-pay-card" id="settle-pay-card">
+          <h3 class="section-title">How should friends repay them?</h3>
+          <p class="panel-desc">Attach a payment method to this split (yours, a DayTally friend’s saved methods, or typed in).</p>
+
+          <div class="edit-field">
+            <label for="settle-source">Payment source</label>
+            <select id="settle-source">
+              <option value="none">Skip for now</option>
+              <option value="self">My saved payment methods</option>
+              <option value="friend">Friend’s DayTally account (email)</option>
+              <option value="manual">Enter account details manually</option>
+            </select>
+          </div>
+
+          <div class="settle-friend-row hidden" id="settle-friend-row">
+            <div class="edit-field">
+              <label for="settle-friend-email">Friend’s DayTally email</label>
+              <input type="email" id="settle-friend-email" placeholder="friend@email.com" autocomplete="email">
+            </div>
+            <button type="button" class="btn-secondary" id="btn-lookup-friend-pay">Look up</button>
+            <p class="field-hint" id="settle-friend-status"></p>
+          </div>
+
+          <div class="edit-field hidden" id="settle-method-field">
+            <label for="settle-method-select">Choose payment method</label>
+            <select id="settle-method-select"></select>
+          </div>
+
+          <div class="settle-manual hidden" id="settle-manual">
+            <div class="edit-row">
+              <div class="edit-field">
+                <label for="settle-label">Label</label>
+                <input type="text" id="settle-label" maxlength="40" placeholder="SG PayNow / IDR BCA">
+              </div>
+              <div class="edit-field">
+                <label for="settle-method">Method</label>
+                <select id="settle-method">
+                  <option value="PayNow">PayNow</option>
+                  <option value="Bank transfer">Bank transfer</option>
+                  <option value="PayLah">PayLah</option>
+                  <option value="GrabPay">GrabPay</option>
+                  <option value="QRIS">QRIS</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+            </div>
+            <div class="edit-field">
+              <label for="settle-handle">Handle / phone</label>
+              <input type="text" id="settle-handle" maxlength="80">
+            </div>
+            <div class="edit-row">
+              <div class="edit-field">
+                <label for="settle-bank">Bank name</label>
+                <input type="text" id="settle-bank" maxlength="80">
+              </div>
+              <div class="edit-field">
+                <label for="settle-account">Account number</label>
+                <input type="text" id="settle-account" maxlength="80">
+              </div>
+            </div>
+            <div class="edit-field">
+              <label for="settle-note">Note</label>
+              <input type="text" id="settle-note" maxlength="200" placeholder="a.n. name on account">
+            </div>
+          </div>
+        </div>
+
         <div class="edit-participants" id="edit-participants"></div>
 
         <div class="btn-row">

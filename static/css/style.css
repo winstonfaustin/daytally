@@ -1439,6 +1439,29 @@ body {
   margin-bottom: 0.85rem;
 }
 
+.settle-pay-card {
+  margin: 1rem 0 1.25rem;
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--border);
+}
+
+.settle-friend-row {
+  display: grid;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.settle-friend-row .btn-secondary {
+  justify-self: start;
+}
+
+.settle-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.5rem;
+}
+
 .field-hint {
   margin: 0.35rem 0 0;
   font-size: 0.8rem;

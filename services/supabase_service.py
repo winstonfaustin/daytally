@@ -231,6 +231,50 @@ def get_profile(user_id: str) -> dict[str, Any]:
     }
 
 
+def lookup_payment_methods_by_email(email: str) -> dict[str, Any]:
+    """Return another user's public payment methods by exact email (auth required by caller)."""
+    cleaned = str(email or "").strip().lower()
+    if not cleaned or "@" not in cleaned:
+        raise ValueError("Enter a valid email address.")
+
+    admin = get_admin_client()
+    user_id = None
+    display_hint = ""
+
+    getter = getattr(admin.auth.admin, "get_user_by_email", None)
+    if callable(getter):
+        try:
+            result = getter(cleaned)
+            auth_user = getattr(result, "user", None) or result
+            user_id = getattr(auth_user, "id", None)
+            display_hint = _display_name_for(auth_user)
+        except Exception:
+            user_id = None
+
+    if not user_id:
+        try:
+            listed = admin.auth.admin.list_users()
+            users = getattr(listed, "users", None) or listed or []
+            for auth_user in users:
+                if str(getattr(auth_user, "email", "") or "").strip().lower() == cleaned:
+                    user_id = auth_user.id
+                    display_hint = _display_name_for(auth_user)
+                    break
+        except Exception as exc:
+            raise ValueError("Could not look up that email right now.") from exc
+
+    if not user_id:
+        raise ValueError("No DayTally account found for that email.")
+
+    profile = get_profile(user_id)
+    return {
+        "email": profile.get("email") or cleaned,
+        "name": profile.get("name") or display_hint or cleaned.split("@")[0],
+        "payment_profiles": profile.get("payment_profiles") or [],
+        "default_payment_id": profile.get("default_payment_id") or "",
+    }
+
+
 def update_profile(user_id: str, updates: dict[str, Any]) -> dict[str, Any]:
     display_name = str(updates.get("name") or updates.get("display_name") or "").strip()
     if len(display_name) < 2:
