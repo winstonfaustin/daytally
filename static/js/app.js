@@ -140,6 +140,7 @@ let audioChunks = [];
 let recordStartTime = null;
 let recordInterval = null;
 let isRecording = false;
+let recordIntent = false; // true while finger/mouse is held (survives async mic permission)
 
 /* ── Utilities ── */
 function isIdr(currency) {
@@ -354,29 +355,56 @@ receiptDropzone.addEventListener("drop", (e) => {
 btnToVoice.addEventListener("click", () => setWizardStep(2));
 
 /* ── Voice recording ── */
-async function startRecording() {
+function clearRecordTimer() {
+  if (recordInterval) {
+    clearInterval(recordInterval);
+    recordInterval = null;
+  }
+}
+
+function setRecordIdleUI() {
+  recordBtn.classList.remove("recording");
+  recordIcon.textContent = "🎙️";
+  recordLabel.textContent = "Hold to record";
+  recordWave.classList.add("hidden");
+}
+
+async function startRecording(e) {
+  if (e) {
+    e.preventDefault();
+  }
+  if (recordIntent || isRecording) return;
+  recordIntent = true;
+  hideError();
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // User already released while waiting for mic permission.
+    if (!recordIntent) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
     audioChunks = [];
     const mimeType = MediaRecorder.isTypeSupported("audio/webm")
       ? "audio/webm"
       : "audio/mp4";
     mediaRecorder = new MediaRecorder(stream, { mimeType });
 
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
+    mediaRecorder.ondataavailable = (ev) => {
+      if (ev.data.size > 0) audioChunks.push(ev.data);
     };
 
     mediaRecorder.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
+      clearRecordTimer();
       const blob = new Blob(audioChunks, { type: mimeType });
-      state.audioBlob = blob;
-      audioPlayback.src = URL.createObjectURL(blob);
-      audioPreview.classList.remove("hidden");
-      recordBtn.classList.remove("recording");
-      recordIcon.textContent = "🎙️";
-      recordLabel.textContent = "Hold to record";
-      recordWave.classList.add("hidden");
+      if (blob.size > 0) {
+        state.audioBlob = blob;
+        audioPlayback.src = URL.createObjectURL(blob);
+        audioPreview.classList.remove("hidden");
+      }
+      setRecordIdleUI();
       updateProcessButton();
     };
 
@@ -387,44 +415,81 @@ async function startRecording() {
     recordIcon.textContent = "⏺";
     recordLabel.textContent = "Recording…";
     recordWave.classList.remove("hidden");
+    recordTimer.textContent = "0:00";
 
+    clearRecordTimer();
     recordInterval = setInterval(() => {
+      if (!recordIntent || !isRecording) {
+        clearRecordTimer();
+        return;
+      }
       const secs = Math.floor((Date.now() - recordStartTime) / 1000);
       const m = Math.floor(secs / 60);
       const s = secs % 60;
       recordTimer.textContent = `${m}:${s.toString().padStart(2, "0")}`;
     }, 200);
+
+    // Stop arrived during setup after permission but before start finished.
+    if (!recordIntent) {
+      stopRecording();
+    }
   } catch {
+    recordIntent = false;
+    isRecording = false;
+    clearRecordTimer();
+    setRecordIdleUI();
     showError("Microphone access denied. Type who had what above instead.");
   }
 }
 
-function stopRecording() {
-  if (!isRecording || !mediaRecorder) return;
+function stopRecording(e) {
+  if (e) e.preventDefault();
+  recordIntent = false;
+  clearRecordTimer();
+
+  if (!isRecording || !mediaRecorder) {
+    setRecordIdleUI();
+    return;
+  }
+
   isRecording = false;
-  clearInterval(recordInterval);
-  mediaRecorder.stop();
+  try {
+    if (mediaRecorder.state !== "inactive") mediaRecorder.stop();
+    else setRecordIdleUI();
+  } catch {
+    setRecordIdleUI();
+  }
 }
 
 function resetRecording() {
+  recordIntent = false;
+  clearRecordTimer();
+  if (isRecording && mediaRecorder && mediaRecorder.state !== "inactive") {
+    try {
+      mediaRecorder.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+  isRecording = false;
   state.audioBlob = null;
   audioPreview.classList.add("hidden");
   audioPlayback.src = "";
   recordTimer.textContent = "0:00";
+  setRecordIdleUI();
   updateProcessButton();
 }
 
-recordBtn.addEventListener("mousedown", startRecording);
-recordBtn.addEventListener("mouseup", stopRecording);
-recordBtn.addEventListener("mouseleave", stopRecording);
-recordBtn.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  startRecording();
+recordBtn.addEventListener("pointerdown", startRecording);
+recordBtn.addEventListener("pointerup", stopRecording);
+recordBtn.addEventListener("pointercancel", stopRecording);
+recordBtn.addEventListener("pointerleave", (e) => {
+  if (recordIntent || isRecording) stopRecording(e);
 });
-recordBtn.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  stopRecording();
-});
+// Older Safari fallbacks
+recordBtn.addEventListener("touchstart", startRecording, { passive: false });
+recordBtn.addEventListener("touchend", stopRecording, { passive: false });
+recordBtn.addEventListener("touchcancel", stopRecording, { passive: false });
 
 btnRerecord.addEventListener("click", resetRecording);
 
