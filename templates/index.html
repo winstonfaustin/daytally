@@ -226,32 +226,26 @@
           </div>
 
           <div class="settle-manual hidden" id="settle-manual">
-            <div class="edit-row">
-              <div class="edit-field">
-                <label for="settle-label">Label</label>
-                <input type="text" id="settle-label" maxlength="40" placeholder="SG PayNow / IDR BCA">
-              </div>
-              <div class="edit-field">
-                <label for="settle-method">Method</label>
-                <select id="settle-method">
-                  <option value="PayNow">PayNow</option>
-                  <option value="Bank transfer">Bank transfer</option>
-                  <option value="PayLah">PayLah</option>
-                  <option value="GrabPay">GrabPay</option>
-                  <option value="QRIS">QRIS</option>
-                  <option value="Cash">Cash</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
+            <div class="edit-field">
+              <label for="settle-method">Method</label>
+              <select id="settle-method">
+                <option value="PayNow">PayNow</option>
+                <option value="Bank transfer">Bank transfer</option>
+                <option value="E-money (OVO / GoPay)">E-money (OVO / GoPay)</option>
+              </select>
             </div>
             <div class="edit-field">
-              <label for="settle-handle">Handle / phone</label>
-              <input type="text" id="settle-handle" maxlength="80">
+              <label for="settle-label">Account name</label>
+              <input type="text" id="settle-label" maxlength="40" placeholder="Name on the account">
             </div>
-            <div class="edit-row">
+            <div class="edit-field">
+              <label for="settle-handle">Phone number</label>
+              <input type="text" id="settle-handle" maxlength="80" placeholder="+65… / +62…">
+            </div>
+            <div class="edit-row settle-bank-row" id="settle-bank-row">
               <div class="edit-field">
                 <label for="settle-bank">Bank name</label>
-                <input type="text" id="settle-bank" maxlength="80">
+                <input type="text" id="settle-bank" maxlength="80" placeholder="DBS / BCA…">
               </div>
               <div class="edit-field">
                 <label for="settle-account">Account number</label>
@@ -260,7 +254,7 @@
             </div>
             <div class="edit-field">
               <label for="settle-note">Note</label>
-              <input type="text" id="settle-note" maxlength="200" placeholder="a.n. name on account">
+              <input type="text" id="settle-note" maxlength="200" placeholder="Optional">
             </div>
           </div>
         </div>
@@ -314,7 +308,7 @@
           <div class="edit-field share-pay-field hidden" id="share-pay-field">
             <label for="share-payment-profile">Include payment details</label>
             <select id="share-payment-profile"></select>
-            <p class="field-hint">Pick SG PayNow, IDR bank, etc. Add more under Profile.</p>
+            <p class="field-hint">Pick a saved PayNow / bank / e-money method. Add more under Profile.</p>
           </div>
           <div class="share-buttons">
             <button type="button" class="btn-secondary" id="btn-copy-all">Copy full summary</button>
@@ -406,7 +400,7 @@
     <main class="main hidden" id="view-profile">
       <section class="card">
         <h3 class="panel-title">Your profile</h3>
-        <p class="panel-desc">Set the name DayTally uses for “you”, and save multiple ways friends can pay you (e.g. PayNow in SGD, bank transfer in IDR).</p>
+        <p class="panel-desc">Set the name DayTally uses for “you”, and save PayNow, bank transfer, or e-money (OVO / GoPay) details for settle-up.</p>
 
         <form id="profile-form" class="profile-form">
           <div class="edit-field">

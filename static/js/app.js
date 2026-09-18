@@ -831,18 +831,20 @@ function collectSettlePayment() {
   const payer = editPayer?.value || "";
 
   if (source === "manual") {
+    const method = settleMethod?.value || "";
+    const needsBank = methodNeedsBank(method);
     const snap = {
       source: "manual",
       owner_name: payer,
       owner_email: "",
       label: (settleLabel?.value || "").trim(),
-      method: settleMethod?.value || "",
+      method,
       handle: (settleHandle?.value || "").trim(),
-      bank_name: (settleBank?.value || "").trim(),
-      account_number: (settleAccount?.value || "").trim(),
+      bank_name: needsBank ? (settleBank?.value || "").trim() : "",
+      account_number: needsBank ? (settleAccount?.value || "").trim() : "",
       note: (settleNote?.value || "").trim(),
     };
-    if (!snap.method && !snap.handle && !snap.bank_name && !snap.account_number && !snap.note) {
+    if (!snap.method && !snap.handle && !snap.bank_name && !snap.account_number && !snap.note && !snap.label) {
       return null;
     }
     return snap;
@@ -1252,13 +1254,15 @@ function formatSettlePaymentBlock(data) {
   if (!pay) return "";
   const owner = pay.owner_name || payer;
   const lines = [];
-  if (pay.label) lines.push(pay.label);
   if (pay.method) lines.push(`Pay via: ${pay.method}`);
-  if (pay.handle) lines.push(`Handle / number: ${pay.handle}`);
-  if (pay.bank_name) lines.push(`Bank: ${pay.bank_name}`);
-  if (pay.account_number) lines.push(`Account: ${pay.account_number}`);
+  if (pay.label) lines.push(`Account name: ${pay.label}`);
+  if (pay.handle) lines.push(`Phone: ${pay.handle}`);
+  if (methodNeedsBank(pay.method) && pay.bank_name) lines.push(`Bank: ${pay.bank_name}`);
+  if (methodNeedsBank(pay.method) && pay.account_number) {
+    lines.push(`Account number: ${pay.account_number}`);
+  }
   if (pay.note) lines.push(pay.note);
-  if (lines.length <= (pay.label ? 1 : 0)) return "";
+  if (!lines.length) return "";
   return `How to pay ${owner}:\n${lines.map((l) => `• ${l}`).join("\n")}`;
 }
 
@@ -1450,6 +1454,35 @@ function newPaymentId() {
   return `pay_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+const PAYMENT_METHODS = ["PayNow", "Bank transfer", "E-money (OVO / GoPay)"];
+
+function methodNeedsBank(method) {
+  return String(method || "") === "Bank transfer";
+}
+
+function syncPayCardBankFields(card) {
+  const method = card.querySelector(".pay-method")?.value || "";
+  const bankRow = card.querySelector(".pay-bank-row");
+  if (bankRow) bankRow.classList.toggle("hidden", !methodNeedsBank(method));
+  const handleLabel = card.querySelector(".pay-handle-label");
+  if (handleLabel) {
+    handleLabel.textContent = methodNeedsBank(method)
+      ? "Phone (optional)"
+      : "Phone number";
+  }
+}
+
+function syncSettleManualBankFields() {
+  const bankRow = document.getElementById("settle-bank-row");
+  if (!bankRow || !settleMethod) return;
+  bankRow.classList.toggle("hidden", !methodNeedsBank(settleMethod.value));
+}
+
+if (settleMethod) {
+  settleMethod.addEventListener("change", syncSettleManualBankFields);
+  syncSettleManualBankFields();
+}
+
 function emptyPaymentProfile() {
   return {
     id: newPaymentId(),
@@ -1468,6 +1501,16 @@ function renderPaymentProfileEditors(profiles, defaultId) {
   const def = defaultId || list[0]?.id || "";
   paymentProfilesList.innerHTML = "";
   list.forEach((p) => {
+    // Map old methods to the simplified set when editing.
+    if (p.method && !PAYMENT_METHODS.includes(p.method)) {
+      if (/ovo|gopay|go pay|e-?money|qris/i.test(p.method)) {
+        p = { ...p, method: "E-money (OVO / GoPay)" };
+      } else if (/bank/i.test(p.method)) {
+        p = { ...p, method: "Bank transfer" };
+      } else {
+        p = { ...p, method: "PayNow" };
+      }
+    }
     paymentProfilesList.appendChild(buildPaymentProfileCard(p, p.id === def));
   });
 }
@@ -1476,6 +1519,9 @@ function buildPaymentProfileCard(profile, isDefault) {
   const card = document.createElement("div");
   card.className = "payment-profile-card";
   card.dataset.id = profile.id;
+  const method = PAYMENT_METHODS.includes(profile.method)
+    ? profile.method
+    : "PayNow";
   card.innerHTML = `
     <div class="profile-pay-top">
       <label class="default-pay-label">
@@ -1484,28 +1530,24 @@ function buildPaymentProfileCard(profile, isDefault) {
       </label>
       <button type="button" class="btn-text btn-remove-pay">Remove</button>
     </div>
-    <div class="edit-row">
-      <div class="edit-field">
-        <label>Label</label>
-        <input type="text" class="pay-label" maxlength="40" placeholder="SG PayNow / IDR BCA" value="${escapeHtml(profile.label || "")}">
-      </div>
-      <div class="edit-field">
-        <label>Method</label>
-        <select class="pay-method">
-          ${["PayNow", "Bank transfer", "PayLah", "GrabPay", "QRIS", "Cash", "Other"]
-            .map(
-              (m) =>
-                `<option value="${m}"${(profile.method || "") === m ? " selected" : ""}>${m}</option>`
-            )
-            .join("")}
-        </select>
-      </div>
+    <div class="edit-field">
+      <label>Method</label>
+      <select class="pay-method">
+        ${PAYMENT_METHODS.map(
+          (m) =>
+            `<option value="${m}"${method === m ? " selected" : ""}>${m}</option>`
+        ).join("")}
+      </select>
     </div>
     <div class="edit-field">
-      <label>Handle / phone / QR id</label>
-      <input type="text" class="pay-handle" maxlength="80" placeholder="+65… or QRIS id" value="${escapeHtml(profile.handle || "")}">
+      <label>Account name</label>
+      <input type="text" class="pay-label" maxlength="40" placeholder="Name on the account" value="${escapeHtml(profile.label || "")}">
     </div>
-    <div class="edit-row">
+    <div class="edit-field">
+      <label class="pay-handle-label">Phone number</label>
+      <input type="text" class="pay-handle" maxlength="80" placeholder="+65… / +62…" value="${escapeHtml(profile.handle || "")}">
+    </div>
+    <div class="edit-row pay-bank-row">
       <div class="edit-field">
         <label>Bank name</label>
         <input type="text" class="pay-bank" maxlength="80" placeholder="DBS / BCA…" value="${escapeHtml(profile.bank_name || "")}">
@@ -1517,9 +1559,11 @@ function buildPaymentProfileCard(profile, isDefault) {
     </div>
     <div class="edit-field">
       <label>Note</label>
-      <textarea class="pay-note" maxlength="200" rows="2" placeholder="a.n. Winston">${escapeHtml(profile.note || "")}</textarea>
+      <textarea class="pay-note" maxlength="200" rows="2" placeholder="Optional">${escapeHtml(profile.note || "")}</textarea>
     </div>
   `;
+  card.querySelector(".pay-method").addEventListener("change", () => syncPayCardBankFields(card));
+  syncPayCardBankFields(card);
   card.querySelector(".btn-remove-pay").addEventListener("click", () => {
     const cards = paymentProfilesList.querySelectorAll(".payment-profile-card");
     if (cards.length <= 1) {
@@ -1540,15 +1584,21 @@ function collectPaymentProfilesFromForm() {
   if (!paymentProfilesList) return { payment_profiles: [], default_payment_id: "" };
   const cards = [...paymentProfilesList.querySelectorAll(".payment-profile-card")];
   const payment_profiles = cards
-    .map((card) => ({
-      id: card.dataset.id || newPaymentId(),
-      label: card.querySelector(".pay-label")?.value.trim() || "",
-      method: card.querySelector(".pay-method")?.value || "",
-      handle: card.querySelector(".pay-handle")?.value.trim() || "",
-      bank_name: card.querySelector(".pay-bank")?.value.trim() || "",
-      account_number: card.querySelector(".pay-account")?.value.trim() || "",
-      note: card.querySelector(".pay-note")?.value.trim() || "",
-    }))
+    .map((card) => {
+      const method = card.querySelector(".pay-method")?.value || "";
+      const needsBank = methodNeedsBank(method);
+      return {
+        id: card.dataset.id || newPaymentId(),
+        label: card.querySelector(".pay-label")?.value.trim() || "",
+        method,
+        handle: card.querySelector(".pay-handle")?.value.trim() || "",
+        bank_name: needsBank ? card.querySelector(".pay-bank")?.value.trim() || "" : "",
+        account_number: needsBank
+          ? card.querySelector(".pay-account")?.value.trim() || ""
+          : "",
+        note: card.querySelector(".pay-note")?.value.trim() || "",
+      };
+    })
     .filter((p) => p.label || p.method || p.handle || p.bank_name || p.account_number || p.note);
   let default_payment_id = "";
   const checked = paymentProfilesList.querySelector(".pay-default:checked");
