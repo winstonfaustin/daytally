@@ -6,7 +6,7 @@ from google.genai import types
 
 from models.schema import BillSplitResult
 from prompts.system_prompt import MULTIMODAL_USER_PROMPT, SYSTEM_PROMPT
-from services.bill_calculator import recalc_proportional_tax_tip
+from services.bill_calculator import normalize_shared_labels, recalc_proportional_tax_tip
 from services.error_gates import collect_error_flags
 from services.idr_amounts import IDR_RESTORE_FLAG, restore_idr_thousands
 from services.gemini_client import build_client, resolve_model
@@ -73,6 +73,7 @@ def split_bill_from_uploads(
     parsed = _parse_response(response)
     idr_scaled = restore_idr_thousands(parsed)
     printed_footer = dict(parsed.get("receipt_summary") or {})
+    normalize_shared_labels(parsed, voice_text)
     result = recalc_proportional_tax_tip(parsed)
     flags = collect_error_flags(result, printed_footer=printed_footer)
     if idr_scaled:

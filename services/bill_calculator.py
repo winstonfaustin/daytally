@@ -1,11 +1,24 @@
 """Recalculate bill splits with proportional tax and service charge allocation."""
 
+from __future__ import annotations
+
+import re
 from decimal import Decimal, ROUND_HALF_UP
 
 from services.idr_amounts import is_idr
 
 _CENT = Decimal("0.01")
 _RUPIAH = Decimal("1")
+
+_SHARED_CUE = re.compile(
+    r"\bshared\b|"
+    r"we all share|"
+    r"everyone shares?|"
+    r"split (?:the |this )?(?:between|among|with)\b|"
+    r"between (?:us|all of us)\b",
+    re.IGNORECASE,
+)
+_SHARED_SUFFIX = re.compile(r"\s*\(\s*shared\s*\)\s*$", re.IGNORECASE)
 
 
 def _to_decimal(value: float | int | str) -> Decimal:
@@ -52,6 +65,35 @@ def _allocate_pool(
 
 def participant_items_total(participant: dict) -> float:
     return sum(float(item.get("item_cost") or 0) for item in participant.get("items_consumed", []))
+
+
+def instructions_mark_shared(instructions: str | None) -> bool:
+    """True only when the user explicitly said something was shared."""
+    text = str(instructions or "").strip()
+    if not text:
+        return False
+    return bool(_SHARED_CUE.search(text))
+
+
+def normalize_shared_labels(data: dict, instructions: str | None = None) -> dict:
+    """Strip '(shared)' from item names unless instructions explicitly mentioned sharing.
+
+    Only applies when typed/transcript instructions are available. Receipt qty>1 + same
+    drink on two people is not 'shared' — only the Shared form field / phrases like
+    'we all shared' should keep the label.
+    """
+    text = str(instructions or "").strip()
+    if not text:
+        return data
+    if instructions_mark_shared(text):
+        return data
+    for person in data.get("participants") or []:
+        for item in person.get("items_consumed") or []:
+            name = str(item.get("item_name") or "")
+            cleaned = _SHARED_SUFFIX.sub("", name).strip()
+            if cleaned:
+                item["item_name"] = cleaned
+    return data
 
 
 def recalc_participant_total(participant: dict, quantum: Decimal = _CENT) -> None:

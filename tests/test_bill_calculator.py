@@ -2,7 +2,7 @@
 
 import unittest
 
-from services.bill_calculator import recalc_proportional_tax_tip
+from services.bill_calculator import normalize_shared_labels, recalc_proportional_tax_tip
 
 
 def _sanook_participants():
@@ -105,6 +105,39 @@ class BillCalculatorTests(unittest.TestCase):
     for person in result["participants"]:
       self.assertEqual(person["tax_and_tip_share"], 1.80)
       self.assertEqual(person["total_owed"], 21.80)
+
+
+class SharedLabelTests(unittest.TestCase):
+  def test_strips_shared_when_form_has_no_share_phrase(self):
+    data = {
+      "participants": [
+        {
+          "name": "Alice",
+          "items_consumed": [{"item_name": "TEH O ICE (shared)", "item_cost": 1.8}],
+        },
+        {
+          "name": "Bob",
+          "items_consumed": [{"item_name": "TEH O ICE (shared)", "item_cost": 1.8}],
+        },
+      ]
+    }
+    normalize_shared_labels(
+      data, "Alice had Teh O Ice. Bob had Teh O Ice."
+    )
+    self.assertEqual(data["participants"][0]["items_consumed"][0]["item_name"], "TEH O ICE")
+    self.assertEqual(data["participants"][1]["items_consumed"][0]["item_name"], "TEH O ICE")
+
+  def test_keeps_shared_when_explicit(self):
+    data = {
+      "participants": [
+        {
+          "name": "Alice",
+          "items_consumed": [{"item_name": "Fries (shared)", "item_cost": 2.0}],
+        }
+      ]
+    }
+    normalize_shared_labels(data, "We all shared Fries. Alice had burger.")
+    self.assertEqual(data["participants"][0]["items_consumed"][0]["item_name"], "Fries (shared)")
 
 
 if __name__ == "__main__":

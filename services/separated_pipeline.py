@@ -20,7 +20,7 @@ from prompts.system_prompt import (
     TRANSCRIBE_SYSTEM_PROMPT,
     TRANSCRIBE_USER_PROMPT,
 )
-from services.bill_calculator import recalc_proportional_tax_tip
+from services.bill_calculator import normalize_shared_labels, recalc_proportional_tax_tip
 from services.error_gates import collect_error_flags
 from services.idr_amounts import IDR_RESTORE_FLAG, restore_idr_extraction, restore_idr_thousands
 from services.gemini_client import DEFAULT_MODEL, build_client
@@ -118,6 +118,7 @@ def split_bill_separated(
 
     idr_scaled = restore_idr_thousands(parsed)
     printed_footer = dict(parsed.get("receipt_summary") or {})
+    normalize_shared_labels(parsed, instructions)
     result = recalc_proportional_tax_tip(parsed)
     flags = collect_error_flags(result, printed_footer=printed_footer)
     if idr_scaled:

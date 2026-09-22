@@ -16,11 +16,11 @@ PROCESSING STEPS (follow in order):
    - Infer currency from Rp, IDR, RM symbols, or thousands grouping. Use IDR for Indonesian receipts. Use SGD for S$ or GST 9%.
 
 2. QUANTITY AND LINE-PRICE RULES (critical)
-   - item_cost is always the LINE TOTAL printed on the receipt for that row — the amount the customer pays for that line, not unit price × quantity computed separately.
-   - If a receipt line shows a quantity multiplier (e.g. "×2", "x2", "2 @"), use ONE items_consumed entry with item_cost equal to the printed line total.
-   - Do NOT duplicate one receipt line into multiple JSON items unless the receipt itself lists separate lines.
-   - Do NOT multiply a line total by quantity again. Example: "Thai Fragrant Steam Rice ×2 — $2.40" → one entry, item_cost: 2.40, NOT two entries at 2.40 each.
-   - If voice says "two rice" but the receipt has one ×2 line at $2.40, assign that single $2.40 line — do not create two $2.40 items.
+   - item_cost is always derived from the LINE TOTAL printed on the receipt for that row — the amount the customer pays for that line, not unit price × quantity computed separately.
+   - If a receipt line shows a quantity multiplier (e.g. "×2", "x2", "2 TEH O ICE", "2 @"), the printed line total is the pool to allocate.
+   - When ONE person is assigned that whole line, use ONE items_consumed entry with item_cost equal to the printed line total.
+   - When SEVERAL people each ordered their own unit of the same item (instructions list the item under each person, without saying "shared"), split the line total into equal per-person item_cost values. Do NOT append "(shared)". Example: "2 TEH O ICE — 3.60" with "Alice had teh o ice. Bob had teh o ice." → each gets item_name "TEH O ICE" (no shared tag), item_cost 1.80.
+   - Do NOT multiply a line total by quantity again. Example: "Thai Fragrant Steam Rice ×2 — $2.40" assigned to one person → one entry, item_cost: 2.40, NOT two entries at 2.40 each.
    - After assignment, the sum of all participants' item_cost values must equal receipt_summary.subtotal.
 
 3. VOICE / TEXT FUSION
@@ -29,9 +29,11 @@ PROCESSING STEPS (follow in order):
    - Match each food item to the person who consumed it per the instructions.
    - If voice quantity differs from receipt, trust the receipt line total for item_cost and use voice only for assignment.
 
-4. SHARED ITEMS
-   - If multiple people share one item, split that line's item_cost equally among them.
-   - Add "(shared)" to item_name when split. Example: $9.90 beef shared by 3 → $3.30 each.
+4. SHARED ITEMS (only when instructions say so)
+   - Append "(shared)" and equal-split a line ONLY when the instructions explicitly mark sharing, e.g. "we all shared…", "shared by everyone", "everyone shares the beef", "split the fries between us".
+   - The optional typed phrase "We all shared X" is an explicit shared signal.
+   - Do NOT treat same item names on multiple people, or receipt qty > 1, as shared by themselves. Those are separate personal orders of the same menu item.
+   - When sharing is explicit: split that line's item_cost equally and add "(shared)" to item_name. Example: $9.90 beef shared by 3 → $3.30 each with "(shared)".
    - Do not assign the full shared line price to only one person.
 
 5. TAX AND SERVICE CHARGE
@@ -76,7 +78,7 @@ JSON schema (all fields required):
       "name": "Participant name exactly as in voice input",
       "items_consumed": [
         {
-          "item_name": "Item name from receipt; append (shared) if split",
+          "item_name": "Item name from receipt; append (shared) ONLY if instructions explicitly said it was shared",
           "item_cost": 0.00
         }
       ],
@@ -88,7 +90,7 @@ JSON schema (all fields required):
 
 WORKED EXAMPLES:
 
-Quantity line (correct):
+Quantity line (correct — one person):
   Receipt: "709 Thai Fragrant Steam Rice ×2 — 2.40"
   Voice: "Mevan had the two rice"
   → ONE item: {"item_name": "709 Thai Fragrant Steam Rice", "item_cost": 2.40}
@@ -96,7 +98,14 @@ Quantity line (correct):
 Quantity line (wrong — never do this):
   → TWO items at 2.40 each totalling 4.80
 
-Shared item:
+Same item, separate personal orders (NOT shared):
+  Receipt: "2 TEH O ICE — 3.60"
+  Voice / form: "Alice had Teh O Ice. Bob had Teh O Ice." (shared field empty; no “we shared”)
+  → Alice: {"item_name": "TEH O ICE", "item_cost": 1.80}
+  → Bob:   {"item_name": "TEH O ICE", "item_cost": 1.80}
+  → Do NOT use "(shared)". Qty 2 on the receipt only means two units were sold.
+
+Shared item (ONLY when instructions say shared):
   Receipt: "507 Stir-fried Beef with Kai Lan — 9.90"
   Voice: "everyone shares the beef between three of us"
   → Each person gets {"item_name": "507 Stir-fried Beef with Kai Lan (shared)", "item_cost": 3.30}
@@ -142,14 +151,15 @@ FUSION_USER_PROMPT = """You will receive:
 2. Split instructions (transcript or typed text)
 
 Assign every receipt line using the instructions. Trust printed line totals for item_cost.
-Apply quantity and shared-item rules from the system prompt.
+Apply quantity rules from the system prompt.
+Use "(shared)" and equal-split ONLY when the instructions explicitly say an item was shared (e.g. "We all shared…"). Same item ordered by two people + receipt qty 2 is NOT shared.
 Return BillSplitResult JSON only."""
 
 MULTIMODAL_USER_PROMPT = """Use the receipt image above to read all line items, quantities, line totals, GST, and service charge.
 
 Use the voice input (audio or typed text) for the event context, participant names, and item assignments.
 
-Apply the quantity rules: one receipt line with ×2 = one JSON item at the printed line total.
+Apply the quantity rules: one receipt line with qty 2 = allocate that printed line total (split across people if each ordered one unit). Append "(shared)" ONLY when instructions explicitly say the item was shared — not merely because two people ordered the same drink/food.
 
 For Indonesian receipts, Rp50.000,00 and POS 50,000 both mean 50000 IDR (50 ribu). Drop sen ,00. Never store 50.
 
