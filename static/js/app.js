@@ -13,10 +13,30 @@ const state = {
   settleFriend: null,
 };
 
+const THEME_KEY = "daytally_theme";
 const HISTORY_KEY = "daytally_history";
 const EVENTS_KEY = "daytally_events";
 const SESSION_KEY = "daytally_session_v2";
 const MAX_HISTORY = 20;
+
+function applyTheme(theme) {
+  const next = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+  const showingLight = next === "dark";
+  document.querySelectorAll(".theme-toggle").forEach((btn) => {
+    btn.setAttribute("aria-pressed", showingLight ? "false" : "true");
+    btn.setAttribute("aria-label", showingLight ? "Switch to light mode" : "Switch to dark mode");
+  });
+}
+
+applyTheme(localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark");
+document.querySelectorAll(".theme-toggle").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme");
+    applyTheme(current === "light" ? "dark" : "light");
+  });
+});
 
 /* ── DOM refs ── */
 const viewNew = document.getElementById("view-new");
@@ -191,7 +211,7 @@ function hideError() {
   errorBanner.textContent = "";
 }
 
-function setWizardStep(step) {
+function setWizardStep(step, options) {
   state.step = step;
   wizardSteps.forEach((el) => {
     const n = Number(el.dataset.step);
@@ -204,9 +224,7 @@ function setWizardStep(step) {
   stepReview.classList.toggle("hidden", step !== 3);
   stepResults.classList.toggle("hidden", step !== 4);
 
-  if (step === 4) {
-    stepResults.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
+  if (step === 4) showStudyCard(!!(options && options.feedback));
 }
 
 function addPersonRow(name = "", item = "") {
@@ -314,6 +332,43 @@ if (navProfile) navProfile.addEventListener("click", () => switchView("profile")
 btnOpenCalendar.addEventListener("click", () => switchView("calendar"));
 
 /* ── Receipt step ── */
+function shrinkReceipt(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const edge = Math.max(img.width, img.height);
+      if (edge <= 1600) {
+        URL.revokeObjectURL(url);
+        resolve(file);
+        return;
+      }
+      const scale = 1600 / edge;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+          resolve(new File([blob], "receipt.jpg", { type: "image/jpeg" }));
+        },
+        "image/jpeg",
+        0.92
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
+
 function setReceiptFile(file) {
   if (!file || !file.type.startsWith("image/")) return;
   state.receiptFile = file;
@@ -327,6 +382,7 @@ function setReceiptFile(file) {
   };
   reader.readAsDataURL(file);
   btnToVoice.disabled = false;
+  document.getElementById("continue-hint")?.classList.add("hidden");
 }
 
 receiptInput.addEventListener("change", () => {
@@ -546,7 +602,7 @@ btnProcess.addEventListener("click", async () => {
   showProcessing();
 
   const formData = new FormData();
-  formData.append("receipt", state.receiptFile);
+  formData.append("receipt", await shrinkReceipt(state.receiptFile));
 
   if (state.audioBlob) {
     formData.append("audio", state.audioBlob, "voice-note.webm");
@@ -569,6 +625,8 @@ btnProcess.addEventListener("click", async () => {
     setProcStep("split", "done");
     state.draftData = payload.data;
     state.draftFlags = payload.flags || payload.debug?.flags || [];
+    state.lastDebug = payload.debug || null;
+    state.nodeLine = modelLine(payload.debug);
     syncPercentFromAmounts(state.draftData);
     renderReview(state.draftData);
     renderReviewFlags(state.draftFlags);
@@ -583,16 +641,25 @@ btnProcess.addEventListener("click", async () => {
   }
 });
 
+function modelLine(debug) {
+  const nodes = debug && debug.node_models;
+  if (!nodes) return "";
+  const speech = nodes.speech === "typed_text" ? "typed text, Whisper not used" : nodes.speech;
+  const split = nodes.fusion === "local_match" ? "matched in code, Gemini not called" : nodes.fusion;
+  const t = debug.timings || {};
+  const timing = ` Time: receipt ${t.ocr_s || 0}s, voice ${t.transcribe_s || 0}s, split ${t.fusion_s || 0}s.`;
+  const heard = nodes.speech !== "typed_text" && debug.transcript ? ` Heard: ${debug.transcript}` : "";
+  return `Receipt: ${nodes.ocr}. Voice: ${speech}. Split: ${split}.${timing}${heard}`;
+}
+
 function renderReviewFlags(flags) {
   if (!reviewFlags) return;
-  if (!flags || !flags.length) {
+  const items = (flags || []).map((flag) => `<li>${escapeHtml(flag.message)}</li>`).join("");
+  if (!items) {
     reviewFlags.classList.add("hidden");
     reviewFlags.innerHTML = "";
     return;
   }
-  const items = flags
-    .map((flag) => `<li>${flag.message}</li>`)
-    .join("");
   reviewFlags.innerHTML = `<strong>Check these before confirming</strong><ul>${items}</ul>`;
   reviewFlags.classList.remove("hidden");
 }
@@ -1019,6 +1086,21 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function displayItemName(name) {
+  let text = String(name || "").trim();
+  const original = text;
+  text = text.replace(/^\d{2,3}[Il|]\s*(?=[A-Za-z])/, "");
+  text = text.replace(/^\d{2,4}(?=[A-Za-z])/, "");
+  text = text.replace(/^\d{3}\s+(?=[A-Za-z])/, "");
+  if (!text) text = original;
+  text = text.replace(/--+/g, "-");
+  text = text.replace(/([a-z])([A-Z])/g, "$1 $2");
+  text = text.replace(/\b(with|and)(?=[a-z])/gi, "$1 ");
+  text = text.replace(/([A-Za-z])([\u4e00-\u9fff])/g, "$1 $2");
+  text = text.replace(/\s+/g, " ").trim();
+  return text || original;
+}
+
 editTitle.addEventListener("input", () => {
   if (state.draftData) state.draftData.event_details.title = editTitle.value;
 });
@@ -1103,7 +1185,7 @@ btnConfirm.addEventListener("click", () => {
     calendarBindStatus.textContent = `Linked to calendar event “${linked.title}” (${linked.date || "no date"}).`;
   }
   renderResults(state.confirmedData);
-  setWizardStep(4);
+  setWizardStep(4, { feedback: true });
 });
 
 editPayer.addEventListener("change", () => {
@@ -1160,10 +1242,10 @@ function renderResults(data) {
     card.className = "participant-card";
     const isPayer = payer && namesMatch(person.name, payer);
 
-    const itemsHtml = person.items_consumed
+    const itemsHtml = (person.items_consumed || [])
       .map(
         (item) =>
-          `<li><span>${escapeHtml(item.item_name)}</span><span>${formatMoney(item.item_cost, currency)}</span></li>`
+          `<li><span>${escapeHtml(displayItemName(item.item_name))}</span><span>${formatMoney(item.item_cost, currency)}</span></li>`
       )
       .join("");
 
@@ -1173,6 +1255,9 @@ function renderResults(data) {
         ? `<div class="settle-line">Repay ${escapeHtml(payer)}: ${formatMoney(person.total_owed, currency)}</div>`
         : "";
 
+    const paidBtn = isPayer
+      ? ""
+      : `<button type="button" class="paid-back-btn${person.repaid ? " is-paid" : ""}">${person.repaid ? "Paid back" : "Mark as paid back"}</button>`;
     card.innerHTML = `
       <div class="participant-header">
         <h4 class="participant-name">${escapeHtml(person.name)}${isPayer ? ' <span class="payer-tag">Paid first</span>' : ""}</h4>
@@ -1187,8 +1272,27 @@ function renderResults(data) {
         </div>
         <button type="button" class="btn-text btn-copy-person">Copy for ${escapeHtml(person.name)}</button>
       </div>
+      ${paidBtn}
     `;
 
+    const paidButton = card.querySelector(".paid-back-btn");
+    if (paidButton) {
+      paidButton.addEventListener("click", () => {
+        person.repaid = !person.repaid;
+        paidButton.classList.toggle("is-paid", person.repaid);
+        paidButton.textContent = person.repaid ? "Paid back" : "Mark as paid back";
+        if (state.confirmedData) {
+          const match = (state.confirmedData.participants || []).find((p) => namesMatch(p.name, person.name));
+          if (match) match.repaid = person.repaid;
+        }
+        if (state.lastHistoryId) {
+          patchHistory(state.lastHistoryId, (saved) => {
+            const match = (saved.data.participants || []).find((p) => namesMatch(p.name, person.name));
+            if (match) match.repaid = person.repaid;
+          });
+        }
+      });
+    }
     card.querySelector(".btn-copy-person").addEventListener("click", () => {
       const msg = buildPersonMessage(data, person);
       copyText(msg);
@@ -1210,7 +1314,7 @@ function buildSummaryText(data) {
     const tag = payer && namesMatch(p.name, payer) ? " (paid the bill)" : payer ? ` → repay ${payer}` : "";
     text += `• ${p.name}: ${formatMoney(p.total_owed, c)}${tag}\n`;
     p.items_consumed.forEach((item) => {
-      text += `  - ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
+      text += `  - ${displayItemName(item.item_name)}: ${formatMoney(item.item_cost, c)}\n`;
     });
     text += `  (tax & service: ${formatMoney(p.tax_and_tip_share, c)})\n`;
   });
@@ -1230,7 +1334,7 @@ function buildPersonMessage(data, person) {
   }
   text += `\n\nBreakdown:\n`;
   person.items_consumed.forEach((item) => {
-    text += `• ${item.item_name}: ${formatMoney(item.item_cost, c)}\n`;
+    text += `• ${displayItemName(item.item_name)}: ${formatMoney(item.item_cost, c)}\n`;
   });
   text += `• Tax & service: ${formatMoney(person.tax_and_tip_share, c)}`;
   if (payer && !namesMatch(person.name, payer)) {
@@ -1352,6 +1456,120 @@ btnShareNative.addEventListener("click", async () => {
   }
 });
 
+const STUDY_QUESTIONS = [
+  ["q1", "I understood what to do at each wizard step."],
+  ["q2", "The Who-had-what form was easier than typing a full paragraph."],
+  ["q3", "The split amounts looked fair for what each person ordered."],
+  ["q4", "I could correct mistakes on Review without re-entering the whole bill."],
+  ["q5", "Waiting for Calculate split was acceptable for this task."],
+  ["q6", "I would use this with friends after a real meal."],
+];
+
+function renderStudyForm() {
+  const host = document.getElementById("study-scores");
+  if (!host || host.dataset.ready) return;
+  host.dataset.ready = "1";
+  host.innerHTML = STUDY_QUESTIONS.map(([id, text]) => `
+    <fieldset class="study-q">
+      <legend>${text}</legend>
+      <div class="study-scale">
+        ${[1, 2, 3, 4, 5].map((n) => `<label><input type="radio" name="${id}" value="${n}"><span>${n}</span></label>`).join("")}
+      </div>
+      <div class="study-ends"><span>Disagree</span><span>Agree</span></div>
+    </fieldset>
+  `).join("");
+}
+
+function lockStudyCard(message) {
+  const card = document.getElementById("study-card");
+  if (!card) return;
+  card.classList.add("study-locked");
+  const thanks = document.getElementById("study-thanks");
+  if (thanks) {
+    thanks.textContent = message;
+    thanks.classList.remove("hidden");
+  }
+  document.getElementById("btn-study-submit")?.classList.add("hidden");
+}
+
+function showStudyCard(on) {
+  const card = document.getElementById("study-card");
+  if (!card) return;
+  renderStudyForm();
+  card.classList.toggle("hidden", !on);
+  if (!on) return;
+  card.classList.remove("study-locked");
+  card.querySelectorAll("input[type=radio]").forEach((input) => {
+    input.checked = false;
+  });
+  const confusing = document.getElementById("study-confusing");
+  const change = document.getElementById("study-change");
+  const trust = document.getElementById("study-trust");
+  if (confusing) confusing.value = "";
+  if (change) change.value = "";
+  if (trust) trust.value = "";
+  const thanks = document.getElementById("study-thanks");
+  if (thanks) {
+    thanks.textContent = "Saved. Thank you. One response per person.";
+    thanks.classList.add("hidden");
+  }
+  document.getElementById("btn-study-submit")?.classList.remove("hidden");
+  document.getElementById("study-error")?.classList.add("hidden");
+  fetch("/api/feedback/mine", { headers: authHeaders() })
+    .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+    .then(({ ok, payload }) => {
+      if (ok && payload.submitted) lockStudyCard("You already sent feedback. One response per person.");
+    })
+    .catch(() => {});
+}
+
+document.getElementById("btn-study-submit")?.addEventListener("click", async () => {
+  const error = document.getElementById("study-error");
+  const scores = {};
+  for (const [id] of STUDY_QUESTIONS) {
+    const picked = document.querySelector(`input[name="${id}"]:checked`);
+    if (!picked) {
+      if (error) {
+        error.textContent = "Choose a score from 1 to 5 on every line.";
+        error.classList.remove("hidden");
+      }
+      return;
+    }
+    scores[id] = Number(picked.value);
+  }
+  const debug = state.lastDebug || {};
+  const speech = debug.node_models && debug.node_models.speech;
+  const path = speech && speech !== "typed_text" ? "voice" : "who_form";
+  try {
+    const response = await fetch("/api/feedback", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        scores,
+        confusing: document.getElementById("study-confusing")?.value || "",
+        change: document.getElementById("study-change")?.value || "",
+        trust: document.getElementById("study-trust")?.value || "",
+        path,
+        timings: debug.timings || {},
+        heard: debug.transcript || "",
+      }),
+    });
+    const payload = await response.json();
+    if (response.status === 409) {
+      lockStudyCard(payload.error || "You already sent feedback. One response per person.");
+      return;
+    }
+    if (!response.ok) throw new Error(payload.error || "Could not save feedback.");
+    lockStudyCard("Saved. Thank you. One response per person.");
+    if (error) error.classList.add("hidden");
+  } catch (err) {
+    if (error) {
+      error.textContent = err.message || "Could not save feedback.";
+      error.classList.remove("hidden");
+    }
+  }
+});
+
 btnNewSplit.addEventListener("click", () => {
   state.receiptFile = null;
   state.audioBlob = null;
@@ -1365,10 +1583,12 @@ btnNewSplit.addEventListener("click", () => {
   receiptPlaceholder.classList.remove("hidden");
   receiptName.textContent = "";
   btnToVoice.disabled = true;
+  document.getElementById("continue-hint")?.classList.remove("hidden");
   resetRecording();
   resetSplitForm();
   hideError();
   setWizardStep(1);
+  showStudyCard(false);
   switchView("new");
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
@@ -1389,6 +1609,59 @@ function getSession() {
   } catch {
     return null;
   }
+}
+
+function tokenExpired(accessToken) {
+  try {
+    const part = String(accessToken || "").split(".")[1];
+    if (!part) return true;
+    const padded = part.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((part.length + 3) % 4);
+    const json = JSON.parse(atob(padded));
+    if (!json.exp) return false;
+    return Number(json.exp) * 1000 <= Date.now() + 60000;
+  } catch {
+    return true;
+  }
+}
+
+const SIGN_IN_AGAIN = "Your sign-in expired. Sign in again to load your bills.";
+let sessionRefresh = null;
+
+function expireSignIn() {
+  setSession(null);
+  showAuth();
+  showAuthError(SIGN_IN_AGAIN);
+}
+
+async function ensureFreshSession(force) {
+  const session = getSession();
+  if (!session?.access_token) return false;
+  if (!force && !tokenExpired(session.access_token)) return true;
+  if (!session.refresh_token) {
+    expireSignIn();
+    return false;
+  }
+  if (!sessionRefresh) {
+    sessionRefresh = fetch("/api/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    })
+      .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+      .then(({ ok, payload }) => {
+        if (!ok || !payload.access_token) throw new Error(payload.error || SIGN_IN_AGAIN);
+        setSession(payload);
+        return true;
+      })
+      .catch(() => {
+        expireSignIn();
+        return false;
+      })
+      .finally(() => {
+        sessionRefresh = null;
+      });
+  }
+  return sessionRefresh;
 }
 
 function getCurrentUser() {
@@ -1420,14 +1693,24 @@ function showAuthError(msg) {
   authError.classList.toggle("hidden", !msg);
 }
 
-async function showApp() {
+function showNotes(on) {
+  document.getElementById("notes-overlay")?.classList.toggle("hidden", !on);
+}
+
+async function showApp(options) {
   authScreen.classList.add("hidden");
   appShell.classList.remove("hidden");
   await refreshProfileFromCloud();
   const user = getCurrentUser();
   if (userChipName) userChipName.textContent = user ? user.name || user.email : "Guest";
   await refreshCloudData();
+  if (options && options.notes) showNotes(true);
 }
+
+document.getElementById("btn-notes-close")?.addEventListener("click", () => showNotes(false));
+document.getElementById("notes-overlay")?.addEventListener("click", (event) => {
+  if (event.target.id === "notes-overlay") showNotes(false);
+});
 
 function showAuth() {
   appShell.classList.add("hidden");
@@ -1621,10 +1904,18 @@ if (btnAddPayment) {
 }
 
 async function refreshProfileFromCloud() {
-  if (!getSession()?.access_token) return;
+  if (!(await ensureFreshSession())) return;
   try {
-    const res = await fetch("/api/auth/profile", { headers: authHeaders() });
+    let res = await fetch("/api/auth/profile", { headers: authHeaders() });
+    if (res.status === 401) {
+      if (!(await ensureFreshSession(true))) return;
+      res = await fetch("/api/auth/profile", { headers: authHeaders() });
+    }
     const payload = await res.json();
+    if (res.status === 401) {
+      expireSignIn();
+      return;
+    }
     if (!res.ok || !payload.user) return;
     const session = getSession();
     if (!session) return;
@@ -1680,24 +1971,50 @@ if (profileForm) {
 }
 
 async function refreshCloudData() {
-  if (!getSession()?.access_token) return;
+  if (!(await ensureFreshSession())) return;
   try {
-    const [splitsRes, eventsRes] = await Promise.all([
+    let [splitsRes, eventsRes] = await Promise.all([
       fetch("/api/splits", { headers: authHeaders() }),
       fetch("/api/events", { headers: authHeaders() }),
     ]);
+    if (splitsRes.status === 401 || eventsRes.status === 401) {
+      if (!(await ensureFreshSession(true))) return;
+      [splitsRes, eventsRes] = await Promise.all([
+        fetch("/api/splits", { headers: authHeaders() }),
+        fetch("/api/events", { headers: authHeaders() }),
+      ]);
+    }
+    if (splitsRes.status === 401 || eventsRes.status === 401) {
+      expireSignIn();
+      return;
+    }
     const splitsJson = await splitsRes.json();
     const eventsJson = await eventsRes.json();
     if (splitsRes.ok && Array.isArray(splitsJson.splits)) {
-      const mapped = splitsJson.splits.map((s) => ({
-        id: s.id,
-        userId: s.userId,
-        savedAt: s.savedAt,
-        eventId: s.eventId || null,
-        data: s.data,
-        cloud: true,
-      }));
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(mapped));
+      const local = loadHistory();
+      const byId = new Map(local.map((h) => [String(h.id), h]));
+      splitsJson.splits.forEach((s) => {
+        let data = s.data;
+        if (typeof data === "string") {
+          try {
+            data = JSON.parse(data);
+          } catch {
+            data = null;
+          }
+        }
+        if (!data || !data.event_details) return;
+        const row = {
+          id: s.id,
+          userId: s.userId,
+          savedAt: s.savedAt,
+          eventId: s.eventId || null,
+          data,
+          cloud: true,
+        };
+        const existing = byId.get(String(s.id));
+        byId.set(String(s.id), existing ? { ...existing, ...row, data } : row);
+      });
+      saveHistory([...byId.values()]);
     }
     if (eventsRes.ok && Array.isArray(eventsJson.events)) {
       localStorage.setItem(EVENTS_KEY, JSON.stringify(eventsJson.events));
@@ -1746,7 +2063,7 @@ authRegisterForm.addEventListener("submit", async (e) => {
       return;
     }
     setSession(payload);
-    await showApp();
+    await showApp({ notes: true });
   } catch (err) {
     showAuthError(err.message || "Could not create profile.");
   }
@@ -1766,7 +2083,7 @@ authLoginForm.addEventListener("submit", async (e) => {
     const payload = await res.json();
     if (!res.ok) throw new Error(payload.error || "Could not log in.");
     setSession(payload);
-    await showApp();
+    await showApp({ notes: true });
   } catch (err) {
     showAuthError(err.message || "Could not log in.");
   }
@@ -1776,6 +2093,7 @@ btnLogout.addEventListener("click", () => {
   setSession(null);
   chatLog.innerHTML = "";
   chatLog.dataset.ready = "";
+  showNotes(false);
   showAuth();
 });
 
@@ -1815,7 +2133,7 @@ async function completeOAuthFromUrl() {
   history.replaceState({}, document.title, window.location.pathname + window.location.search);
   if (!res.ok) throw new Error(payload.error || "Google sign-in failed.");
   setSession(payload);
-  await showApp();
+  await showApp({ notes: true });
   return true;
 }
 
@@ -1904,7 +2222,7 @@ function saveToHistory(data) {
     cloud: false,
   };
   history.unshift(entry);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  saveHistory(history);
 
   const token = getSession()?.access_token;
   if (token) {
@@ -1924,7 +2242,7 @@ function saveToHistory(data) {
           all[idx].id = newId;
           all[idx].cloud = true;
           all[idx].savedAt = j.split.savedAt || all[idx].savedAt;
-          localStorage.setItem(HISTORY_KEY, JSON.stringify(all));
+          saveHistory(all);
         }
         entry.id = newId;
         entry.cloud = true;
@@ -1948,7 +2266,32 @@ function loadHistory() {
 }
 
 function saveHistory(history) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  let all = [];
+  try {
+    all = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    all = [];
+  }
+  const user = getCurrentUser();
+  const others = user ? all.filter((h) => h.userId && h.userId !== user.id) : [];
+  const mine = (history || []).slice(0, MAX_HISTORY);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify([...mine, ...others]));
+}
+
+function patchHistory(id, mutator) {
+  let all = [];
+  try {
+    all = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    all = [];
+  }
+  const next = all.map((entry) => {
+    if (entry.id !== id) return entry;
+    const copy = deepClone(entry);
+    mutator(copy);
+    return copy;
+  });
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
 }
 
 function loadEvents() {
@@ -2071,6 +2414,7 @@ function renderCalendar() {
     if (viewBtn && splits[0]) {
       viewBtn.addEventListener("click", () => {
         state.confirmedData = deepClone(splits[0].data);
+        state.lastHistoryId = splits[0].id;
         renderResults(state.confirmedData);
         if (calendarBindStatus) {
           calendarBindStatus.textContent = `Linked to calendar event “${event.title}” (${event.date}).`;
@@ -2150,7 +2494,7 @@ function ensureChatWelcome() {
   const me = getCurrentUser()?.name || "you";
   appendChatBubble(
     "bot",
-    `Hi ${me}. Ask about your saved splits and events. Try “What do I still owe?” — that uses your profile name and who paid first on each bill.`
+    `Hi ${me}. Ask about your saved splits and events. Try “What do I still owe?” That uses your profile name and who paid first on each bill.`
   );
 }
 
@@ -2163,15 +2507,38 @@ function appendChatBubble(role, text) {
 }
 
 function monthKey(isoOrDate) {
-  const raw = String(isoOrDate || "");
+  const raw = String(isoOrDate || "").trim();
   if (/^\d{4}-\d{2}/.test(raw)) return raw.slice(0, 7);
+  const dmy = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}`;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function answerChat(question) {
-  const q = question.toLowerCase().trim();
+let lastChatFollow = "";
+
+function answerChat(question, expanded) {
+  const raw = question.toLowerCase().trim();
+  if (!expanded && lastChatFollow) {
+    const follow = raw.match(/^(?:what|how) about\s+([a-z][a-z'\-]+)(?:\s+then)?\??$/)
+      || raw.match(/^(?:and|also)\s+([a-z][a-z'\-]+)\??$/)
+      || raw.match(/^([a-z][a-z'\-]+)\??$/);
+    if (follow) {
+      const name = follow[1];
+      const rewritten = lastChatFollow === "owes-me"
+        ? `Does ${name} owe me`
+        : lastChatFollow === "i-owe"
+          ? `What do I owe ${name}`
+          : lastChatFollow === "share"
+            ? `What is ${name} share`
+            : lastChatFollow === "did-pay"
+              ? `Did ${name} pay`
+              : "";
+      if (rewritten) return answerChat(rewritten, true);
+    }
+  }
+  const q = raw;
   const history = loadHistory();
   const events = loadEvents();
   const me = getCurrentUser()?.name || "";
@@ -2181,27 +2548,30 @@ function answerChat(question) {
   }
 
   if (/list.*(event|calendar)|recent events|my events/.test(q)) {
+    lastChatFollow = "";
     if (!events.length) return "No calendar events saved yet.";
     return events
       .slice(0, 8)
       .map((e) => {
         const n = getSplitsForEvent(e).length;
-        return `• ${e.title} (${e.date}) — ${n} linked bill${n === 1 ? "" : "s"}`;
+        return `• ${e.title} (${e.date}): ${n} linked bill${n === 1 ? "" : "s"}`;
       })
       .join("\n");
   }
 
   if (/who paid|paid first|who fronted/.test(q)) {
+    lastChatFollow = "";
     const last = history[0];
     if (!last) return "No splits saved yet.";
     const payer = last.data.paid_by || "";
     if (!payer) {
       return `Your latest split “${last.data.event_details.title}” has no payer set. Open it from History, or make a new split and choose “Who paid first” on Review before confirming.`;
     }
-    return `On “${last.data.event_details.title}” (${last.data.event_details.date}), ${payer} was marked as who paid first. The chatbot cannot change that — edit “Who paid first” on Review before you confirm, or delete and re-confirm the split.`;
+    return `On “${last.data.event_details.title}” (${last.data.event_details.date}), ${payer} was marked as who paid first. The chatbot cannot change that. Edit “Who paid first” on Review before you confirm, or delete and re-confirm the split.`;
   }
 
   if (/last split|most recent|latest bill/.test(q)) {
+    lastChatFollow = "";
     const last = history[0];
     if (!last) return "No splits saved yet.";
     const d = last.data;
@@ -2211,7 +2581,16 @@ function answerChat(question) {
     return `Last split: ${d.event_details.title} on ${d.event_details.date}. Grand total ${formatMoney(d.receipt_summary.grand_total, c)}.${payer} ${people}.`;
   }
 
+  if (/how much is the bill|how much was the bill|what is the bill total|what was the total/.test(q)) {
+    lastChatFollow = "";
+    const last = history[0];
+    if (!last) return "No splits saved yet.";
+    const d = last.data;
+    return `The latest bill, ${d.event_details.title} (${d.event_details.date}), has a grand total of ${formatMoney(d.receipt_summary.grand_total, d.event_details.currency)}.`;
+  }
+
   if (/how much.*(spend|spent|total)|total spend|grand total|spent in total/.test(q)) {
+    lastChatFollow = "";
     const byCurrency = {};
     history.forEach((h) => {
       const c = h.data.event_details.currency || "SGD";
@@ -2236,19 +2615,184 @@ function answerChat(question) {
     return `Across ${history.length} saved split(s): ${allLine}. This calendar month (${thisMonth}): ${monthLine}. These numbers are summed from stored grand totals only.`;
   }
 
-  const askingMyOwe = /what do i (still )?owe|how much do i (still )?owe|what do i need to (pay|repay)/.test(q);
+  const selfWord = /^(me|myself|i|you)$/;
+  const stopName = /^(who|what|anyone|someone|everybody|everyone|money|people|they|them|somebody)$/;
+  const doesNameOweMe = q.match(/(?:do|does|did)\s+([a-z][a-z\-']+)\s+ow(?:e|es|ed)?\s+(?:me|myself|i|you)\b/);
+  const whatDoIOweName = q.match(/(?:what|how much) do i (?:still )?ow(?:e|es|ed)?\s+([a-z][a-z\-']+)/)
+    || q.match(/\bdo i (?:still )?ow(?:e|es|ed)?\s+([a-z][a-z\-']+)/);
+  const shouldPayMe = q.match(/(?:should|do|does|did)\s+([a-z][a-z\-']+)\s+(?:pay|repay|paid)\s+(?:me|you)\b/)
+    || q.match(/how much should\s+([a-z][a-z\-']+)\s+(?:pay|repay)\s+(?:me|you)\b/);
+  const askingMyOwe =
+    !whatDoIOweName &&
+    /what do i (still )?owe|how much do i (still )?owe|what do i need to (pay|repay)/.test(q);
   const oweMatch =
-    q.match(/(?:owe|owes|owed)\s+([a-z][a-z\-']+)/i) ||
-    q.match(/what does\s+([a-z][a-z\-']+)\s+owe/i);
-  if (askingMyOwe || oweMatch || /who owes what|balances?/.test(q)) {
+    q.match(/(?:what|how much) does\s+([a-z][a-z\-']+)\s+owe/i) ||
+    q.match(/\b([a-z][a-z\-']+)\s+owe[sd]?\b/i);
+  const nameToken = (match) => {
+    const token = match && match[1] ? match[1].toLowerCase() : "";
+    return token && !selfWord.test(token) && !stopName.test(token) ? token : "";
+  };
+  const sharesFor = (token) => {
+    const hits = [];
+    history.forEach((h) => {
+      const d = h.data;
+      const payer = d.paid_by || "";
+      (d.participants || []).forEach((p) => {
+        const person = String(p.name || "");
+        const folded = person.toLowerCase();
+        if (token && folded !== token && !folded.startsWith(token) && !folded.includes(token)) return;
+        if (token && token.length < 3) return;
+        hits.push({
+          person,
+          amount: Number(p.total_owed || 0),
+          currency: d.event_details.currency,
+          event: d.event_details.title,
+          date: d.event_details.date,
+          payer,
+          userIsPayer: !!(payer && me && namesMatch(payer, me)),
+          personIsPayer: !!(payer && namesMatch(payer, person)),
+          repaid: !!p.repaid,
+          userAmount: (() => {
+            const row = (d.participants || []).find((item) => me && namesMatch(item.name, me));
+            return row ? Number(row.total_owed || 0) : null;
+          })(),
+          userRepaid: !!(() => {
+            const row = (d.participants || []).find((item) => me && namesMatch(item.name, me));
+            return row && row.repaid;
+          })(),
+        });
+      });
+    });
+    return hits;
+  };
+
+  const oweMeMatch = doesNameOweMe || shouldPayMe;
+  if (oweMeMatch && !stopName.test(oweMeMatch[1].toLowerCase())) {
+    lastChatFollow = "owes-me";
+    const token = oweMeMatch[1].toLowerCase();
+    if (selfWord.test(token)) {
+      return "Ask with their name, for example “Does Mevan owe me?”";
+    }
+    const hits = sharesFor(token).filter((row) => row.person.toLowerCase().includes(token));
+    if (!hits.length) return `I found no saved share for “${token}”.`;
+    return hits
+      .map((row) => {
+        const money = formatMoney(row.amount, row.currency);
+        if (row.personIsPayer && me && namesMatch(row.person, me)) {
+          return `You paid first on ${row.event} (${row.date}), so you do not owe yourself.`;
+        }
+        if (row.personIsPayer) {
+          if (row.userAmount == null) {
+            return `${row.person} paid first on ${row.event} (${row.date}), so ${row.person} does not owe you.`;
+          }
+          return `${row.person} paid first on ${row.event} (${row.date}), so ${row.person} does not owe you. You owe ${row.person} ${formatMoney(row.userAmount, row.currency)}.`;
+        }
+        if (row.userIsPayer) {
+          if (row.repaid) return `${row.person} has paid you back on ${row.event} (${row.date}). The ${money} is marked paid in History.`;
+          return `${row.person} owes you ${money} on ${row.event} (${row.date}). Tick Paid back in History when you have it.`;
+        }
+        if (row.payer) {
+          return `${row.person} owes ${money} to ${row.payer} on ${row.event} (${row.date}), not to you.`;
+        }
+        return `${row.person}'s share on ${row.event} (${row.date}) is ${money}. No payer was saved, so I cannot say they owe you.`;
+      })
+      .join("\n");
+  }
+
+  if (whatDoIOweName && !selfWord.test(whatDoIOweName[1])) {
+    lastChatFollow = "i-owe";
+    const token = whatDoIOweName[1].toLowerCase();
+    const hits = sharesFor(token).filter((row) => row.person.toLowerCase().includes(token));
+    if (!hits.length) return `I found no saved share for “${token}”.`;
+    return hits
+      .map((row) => {
+        if (row.userIsPayer) {
+          if (row.repaid) return `You paid first on ${row.event} (${row.date}). ${row.person} has paid you back. The ${formatMoney(row.amount, row.currency)} is marked paid in History.`;
+          return `You paid first on ${row.event} (${row.date}), so you do not owe ${row.person}. ${row.person} still owes you ${formatMoney(row.amount, row.currency)}.`;
+        }
+        if (row.personIsPayer) {
+          if (row.userAmount == null) {
+            return `${row.person} paid first on ${row.event} (${row.date}). You are not listed on that bill.`;
+          }
+          if (row.userRepaid) return `You marked your ${formatMoney(row.userAmount, row.currency)} share as paid back to ${row.person} on ${row.event} (${row.date}).`;
+          return `You owe ${row.person} ${formatMoney(row.userAmount, row.currency)} on ${row.event} (${row.date}). Tick Paid back next to your name in History when you have sent it.`;
+        }
+        if (row.payer) {
+          return `On ${row.event} (${row.date}), ${row.payer} paid first. ${row.person} owes ${formatMoney(row.amount, row.currency)} to ${row.payer}.`;
+        }
+        return `On ${row.event} (${row.date}), ${row.person}'s share is ${formatMoney(row.amount, row.currency)}. No payer was saved.`;
+      })
+      .join("\n");
+  }
+
+  if (/who owes me\b|who owes money|does (?:anyone|someone|everybody|everyone) owe me/.test(q) || (me && new RegExp(`who owes ${me.toLowerCase()}\\b`).test(q))) {
+    lastChatFollow = "owes-me";
+    const lines = [];
+    history.forEach((h) => {
+      const d = h.data;
+      const payer = d.paid_by || "";
+      if (!payer || !namesMatch(payer, me)) return;
+      (d.participants || []).forEach((p) => {
+        if (namesMatch(p.name, payer)) return;
+        const money = formatMoney(p.total_owed, d.event_details.currency);
+        if (p.repaid) {
+          lines.push(`${p.name} has paid you back on ${d.event_details.title} (${d.event_details.date}). The ${money} is marked paid in History.`);
+        } else {
+          lines.push(`${p.name} still owes you ${money} on ${d.event_details.title} (${d.event_details.date}).`);
+        }
+      });
+    });
+    if (!lines.length) return "Nobody owes you on the saved bills. Either you did not pay first, or no shares are stored.";
+    return lines.join("\n");
+  }
+
+  const shareAsk = q.match(/(?:what is|how much is)\s+([a-z][a-z\-']+)\s+share/)
+    || q.match(/([a-z][a-z\-']+)(?:'s|s)\s+share/);
+  if (shareAsk && nameToken(shareAsk)) {
+    lastChatFollow = "share";
+    const token = nameToken(shareAsk);
+    const hits = sharesFor(token).filter((row) => row.person.toLowerCase().includes(token));
+    if (!hits.length) return `I found no saved share for “${token}”.`;
+    return hits
+      .map((row) => {
+        const money = formatMoney(row.amount, row.currency);
+        if (row.personIsPayer) return `${row.person} paid first on ${row.event} (${row.date}). Their own share is ${money}, so they do not repay it.`;
+        if (row.userIsPayer) {
+          return row.repaid
+            ? `${row.person}'s share is ${money} on ${row.event} (${row.date}). You marked it paid in History.`
+            : `${row.person}'s share is ${money} on ${row.event} (${row.date}). ${row.person} still owes you that amount.`;
+        }
+        if (row.payer) return `${row.person}'s share is ${money} on ${row.event} (${row.date}). ${row.person} owes ${row.payer}.`;
+        return `${row.person}'s share is ${money} on ${row.event} (${row.date}). No payer was saved.`;
+      })
+      .join("\n");
+  }
+
+  const didPay = q.match(/(?:did|has|have)\s+([a-z][a-z\-']+)\s+(?:already\s+)?(?:pay|paid)(?:\s+(?:me|you)(?:\s+back)?|\s+back)?\b/);
+  if (didPay && nameToken(didPay) && !/pay\s+(?:me|you)\b/.test(q)) {
+    lastChatFollow = "did-pay";
+    const token = nameToken(didPay);
+    const hits = sharesFor(token).filter((row) => row.person.toLowerCase().includes(token));
+    if (!hits.length) return `I found no saved share for “${token}”.`;
+    return hits
+      .map((row) => {
+        if (row.personIsPayer) return `Yes. ${row.person} paid the restaurant first on ${row.event} (${row.date}).`;
+        if (row.repaid) return `Yes. ${row.person} is marked paid in History for ${formatMoney(row.amount, row.currency)} on ${row.event} (${row.date}).`;
+        return `Not yet. ${row.person} still owes ${formatMoney(row.amount, row.currency)}${row.userIsPayer ? " to you" : row.payer ? ` to ${row.payer}` : ""} on ${row.event} (${row.date}). Tick Paid back in History when you have it.`;
+      })
+      .join("\n");
+  }
+
+  if (askingMyOwe || nameToken(oweMatch) || /who owes what|balances?/.test(q)) {
     if (askingMyOwe) {
+      lastChatFollow = "i-owe";
       if (!me) return "Log in with your profile name first so I know who “I” is.";
       const debts = [];
       history.forEach((h) => {
         const d = h.data;
         const payer = d.paid_by || "";
         const meRow = d.participants.find((p) => namesMatch(p.name, me));
-        if (!meRow) return;
+        if (!meRow || meRow.repaid) return;
         if (payer && namesMatch(payer, me)) return;
         debts.push({
           to: payer || "the group (payer not set)",
@@ -2267,7 +2811,7 @@ function answerChat(question) {
             .slice(0, 3)
             .map((h) => `“${h.data.event_details.title}”`)
             .join(", ");
-          return `You (${me}) were marked as who paid first on ${asPayer.length} bill(s), so you do not owe anyone on those (e.g. ${samples}). If someone else paid (e.g. Jovan), set “Who paid first” to them on the Review step before confirming — the chatbot cannot change an already saved payer.`;
+          return `You (${me}) were marked as who paid first on ${asPayer.length} bill${asPayer.length === 1 ? "" : "s"}, so you do not owe anyone on ${asPayer.length === 1 ? "that bill" : "those bills"} (for example ${samples}). If someone else paid, set “Who paid first” to them on the Review step before confirming. The chatbot cannot change an already saved payer.`;
         }
         return `I found no open shares for ${me}. You may not be listed as a participant on saved bills, or payer was not set. Check History and your display name under Profile.`;
       }
@@ -2277,12 +2821,12 @@ function answerChat(question) {
         byPayee[key] = byPayee[key] || { to: row.to, currency: row.currency, amount: 0, lines: [] };
         byPayee[key].amount += Number(row.amount || 0);
         byPayee[key].lines.push(
-          `• ${row.event} (${row.date}): ${formatMoney(row.amount, row.currency)} → ${row.to}`
+          `• ${row.event} (${row.date}): ${formatMoney(row.amount, row.currency)} to ${row.to}`
         );
       });
       const summary = Object.values(byPayee)
         .map((g) => `${formatMoney(g.amount, g.currency)} to ${g.to}`)
-        .join("; ");
+        .join(". ");
       const detail = Object.values(byPayee)
         .flatMap((g) => g.lines)
         .slice(0, 8)
@@ -2290,7 +2834,7 @@ function answerChat(question) {
       return `As ${me}, you still owe: ${summary}.\n${detail}`;
     }
 
-    const nameFilter = oweMatch ? oweMatch[1] : null;
+    const nameFilter = nameToken(oweMatch) || null;
     const rows = [];
     history.forEach((h) => {
       const payer = h.data.paid_by || "";
@@ -2304,6 +2848,7 @@ function answerChat(question) {
           event: h.data.event_details.title,
           date: h.data.event_details.date,
           to: payer || "payer unset",
+          repaid: !!p.repaid,
         });
       });
     });
@@ -2322,17 +2867,106 @@ function answerChat(question) {
         .join(" + ");
       const detail = rows
         .slice(0, 6)
-        .map((r) => `• ${r.event} (${r.date}): ${formatMoney(r.amount, r.currency)} → ${r.to}`)
+        .map((r) => r.repaid
+          ? `• ${r.person} paid ${formatMoney(r.amount, r.currency)} back to ${r.to} on ${r.event} (${r.date})`
+          : `• ${r.person} owes ${formatMoney(r.amount, r.currency)} to ${r.to} on ${r.event} (${r.date})`)
         .join("\n");
-      return `From saved splits, “${nameFilter}” should repay: ${sumLine}.\n${detail}`;
+      const who = rows[0].person;
+      const toYou = rows.every((r) => me && namesMatch(r.to, me));
+      const openRows = rows.filter((r) => !r.repaid);
+      if (openRows.length && openRows.length !== rows.length) {
+        const openByCurrency = {};
+        openRows.forEach((r) => {
+          openByCurrency[r.currency] = (openByCurrency[r.currency] || 0) + Number(r.amount || 0);
+        });
+        const openSum = Object.entries(openByCurrency).map(([c, n]) => formatMoney(n, c)).join(" + ");
+        return toYou
+          ? `${who} still owes you ${openSum}.\n${detail}`
+          : `${who} still needs to repay ${openSum}.\n${detail}`;
+      }
+      if (!openRows.length) {
+        return toYou
+          ? `${who} has paid you back. Those shares are marked paid in History.\n${detail}`
+          : `${who} is marked paid in History.\n${detail}`;
+      }
+      return toYou
+        ? `${who} owes you ${sumLine}.\n${detail}`
+        : `${who} should repay ${sumLine}.\n${detail}`;
     }
     return rows
       .slice(0, 10)
-      .map((r) => `• ${r.person} owes ${formatMoney(r.amount, r.currency)} to ${r.to} (${r.event})`)
+      .map((r) => r.repaid
+        ? `• ${r.person} paid ${formatMoney(r.amount, r.currency)} back to ${r.to} (${r.event})`
+        : `• ${r.person} owes ${formatMoney(r.amount, r.currency)} to ${r.to} (${r.event})`)
       .join("\n");
   }
 
-  return "I can answer total spend, what you owe (using your profile + who paid first), recent events, or your last split. Money always comes from stored confirmations.";
+  const ate = q.match(/(?:what did|what has|what does)\s+([a-z][a-z\-']+)\s+(?:have|had|eat|ate|order|ordered|get|got)\b/);
+  if (ate && nameToken(ate)) {
+    lastChatFollow = "share";
+    const token = nameToken(ate);
+    const lines = [];
+    history.forEach((h) => {
+      const d = h.data;
+      (d.participants || []).forEach((p) => {
+        if (!p.name.toLowerCase().includes(token)) return;
+        const items = (p.items_consumed || []).map((item) => displayItemName(item.item_name)).filter(Boolean);
+        lines.push(items.length
+          ? `${p.name} on ${d.event_details.title} (${d.event_details.date}): ${items.join(", ")}.`
+          : `${p.name} is on ${d.event_details.title} (${d.event_details.date}), but no dishes were saved.`);
+      });
+    });
+    if (!lines.length) return `I found no saved dishes for “${token}”.`;
+    return lines.slice(0, 6).join("\n");
+  }
+
+  if (/gst|service charge|how much (?:was|is) the tax|tax on the bill/.test(q)) {
+    lastChatFollow = "";
+    const last = history[0];
+    if (!last) return "No splits saved yet.";
+    const d = last.data;
+    const s = d.receipt_summary || {};
+    const c = d.event_details.currency;
+    return `On ${d.event_details.title} (${d.event_details.date}), GST is ${formatMoney(s.tax, c)} and service charge is ${formatMoney(s.tip, c)}. Grand total ${formatMoney(s.grand_total, c)}.`;
+  }
+
+  if (/how many people|who was there|who was on the bill|who is on the bill/.test(q)) {
+    lastChatFollow = "";
+    const last = history[0];
+    if (!last) return "No splits saved yet.";
+    const names = (last.data.participants || []).map((p) => p.name).filter(Boolean);
+    return `${last.data.event_details.title} (${last.data.event_details.date}) has ${names.length} people: ${names.join(", ")}.`;
+  }
+
+  if (/when was|what date|what day/.test(q)) {
+    lastChatFollow = "";
+    const last = history[0];
+    if (!last) return "No splits saved yet.";
+    return `${last.data.event_details.title} is dated ${last.data.event_details.date}.`;
+  }
+
+  if (/who (?:has not|hasn't|havent|haven't) paid|who still owes|who has not paid me back|is the bill settled|has everyone paid/.test(q)) {
+    lastChatFollow = "owes-me";
+    const open = [];
+    const done = [];
+    history.forEach((h) => {
+      const d = h.data;
+      const payer = d.paid_by || "";
+      (d.participants || []).forEach((p) => {
+        if (payer && namesMatch(p.name, payer)) return;
+        const line = `${p.name} ${formatMoney(p.total_owed, d.event_details.currency)} on ${d.event_details.title}`;
+        if (p.repaid) done.push(line);
+        else open.push(line);
+      });
+    });
+    if (!open.length && !done.length) return "No shares are stored yet.";
+    if (!open.length) return `Everyone is marked paid in History.${done.length ? ` Paid back: ${done.join(". ")}.` : ""}`;
+    const waiting = open.join(". ");
+    const finished = done.length ? ` Already marked paid: ${done.join(". ")}.` : "";
+    return `Still waiting: ${waiting}.${finished}`;
+  }
+
+  return "I can answer total spend, what you owe, who has paid you back, recent events, or your last split. Money comes from stored confirmations. Tick Paid back in History when someone sends their share.";
 }
 
 chatForm.addEventListener("submit", (e) => {
@@ -2355,14 +2989,34 @@ chatChips.addEventListener("click", (e) => {
 function renderHistory() {
   const history = loadHistory();
   historyList.innerHTML = "";
-  historyEmpty.classList.toggle("hidden", history.length > 0);
+  let shown = 0;
 
   history.forEach((entry) => {
-    const { data } = entry;
+    let data = entry.data;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        data = null;
+      }
+    }
+    if (!data?.event_details || !Array.isArray(data.participants)) return;
     const c = data.event_details.currency;
     const linked = entry.eventId
       ? loadEvents().find((ev) => ev.id === entry.eventId)
       : null;
+    const payer = data.paid_by || "";
+    const owing = (data.participants || []).filter((p) => !payer || !namesMatch(p.name, payer));
+    const paidRows = owing
+      .map((p) => {
+        const paid = !!p.repaid;
+        return `<label class="history-check${paid ? " is-paid" : ""}">
+          <input type="checkbox" data-name="${escapeHtml(p.name)}"${paid ? " checked" : ""}>
+          <span class="history-check-name">${escapeHtml(p.name)}</span>
+          <span class="history-check-amt">${formatMoney(p.total_owed, c)}</span>
+        </label>`;
+      })
+      .join("");
     const el = document.createElement("div");
     el.className = "history-item";
     el.innerHTML = `
@@ -2370,7 +3024,9 @@ function renderHistory() {
         <strong>${escapeHtml(data.event_details.title)}</strong>
         <span>${escapeHtml(data.event_details.date)}</span>
         <span class="history-total">${formatMoney(data.receipt_summary.grand_total, c)}</span>
+        ${payer ? `<span>Paid first by ${escapeHtml(payer)}</span>` : ""}
         ${linked ? `<span class="history-link">📅 ${escapeHtml(linked.title)}</span>` : ""}
+        ${paidRows ? `<div class="history-paid"><span class="history-paid-label">Paid back</span>${paidRows}</div>` : ""}
       </div>
       <div class="history-item-actions">
         <button type="button" class="btn-text btn-view-history">View</button>
@@ -2379,10 +3035,28 @@ function renderHistory() {
       </div>
     `;
 
+    el.querySelectorAll(".history-check input").forEach((box) => {
+      box.addEventListener("change", () => {
+        const personName = box.getAttribute("data-name");
+        patchHistory(entry.id, (saved) => {
+          const person = (saved.data.participants || []).find((p) => namesMatch(p.name, personName));
+          if (person) person.repaid = box.checked;
+        });
+        box.closest(".history-check")?.classList.toggle("is-paid", box.checked);
+      });
+    });
+
     el.querySelector(".btn-view-history").addEventListener("click", () => {
+      showNotes(false);
+      state.lastHistoryId = entry.id;
       state.confirmedData = deepClone(data);
-      renderResults(state.confirmedData);
       switchView("new");
+      try {
+        renderResults(state.confirmedData);
+      } catch (err) {
+        showError(err.message || "Could not open this split.");
+        return;
+      }
       setWizardStep(4);
     });
 
@@ -2391,6 +3065,8 @@ function renderHistory() {
     });
 
     el.querySelector(".btn-delete-history").addEventListener("click", () => {
+      const title = data.event_details.title || "this split";
+      if (!window.confirm(`Delete “${title}”? This cannot be undone.`)) return;
       const updated = loadHistory().filter((h) => h.id !== entry.id);
       saveHistory(updated);
       if (entry.eventId) {
@@ -2404,7 +3080,9 @@ function renderHistory() {
     });
 
     historyList.appendChild(el);
+    shown += 1;
   });
+  historyEmpty.classList.toggle("hidden", shown > 0);
 }
 
 /* ── Boot ── */
@@ -2417,7 +3095,8 @@ function renderHistory() {
     return;
   }
   if (getSession()?.access_token && getCurrentUser()) {
-    await showApp();
+    const ok = await ensureFreshSession();
+    if (ok) await showApp();
   } else {
     showAuth();
   }

@@ -1,0 +1,112 @@
+{
+  "created_utc": "20260922T173139Z",
+  "latency_target_s": 10.0,
+  "latency_s": 24.025,
+  "audio": "D:\\FYP\\daytally\\evaluation\\audio\\sanook_who_had_what.wav",
+  "audio_note": "Computer reading of the Sanook who-had-what text so Whisper has audio. Not a restaurant recording.",
+  "node_models": {
+    "ocr": "rapidocr-onnxruntime",
+    "speech": "faster-whisper-small",
+    "fusion": "gemini-3.6-flash"
+  },
+  "timings": {
+    "ocr_s": 3.473,
+    "transcribe_s": 10.908,
+    "fusion_s": 9.245
+  },
+  "transcript": "Mevin had the two Thai fragrant steamed rice and the deep fried chicken with Thai herb. Winston had the pineapple fried rice. Albert had the honey chicken rice. Everyone shares the stir-fried beef with Kailan evenly between the three of us.",
+  "score": {
+    "schema_ok": true,
+    "names_ok": false,
+    "totals_within_0_01": false,
+    "people": [
+      {
+        "name": "Mevan",
+        "status": "missing"
+      },
+      {
+        "name": "Winston",
+        "food": 11.2,
+        "food_gt": 11.2,
+        "total": 13.43,
+        "total_gt": 13.43,
+        "total_pass": true,
+        "food_pass": true
+      },
+      {
+        "name": "Albert",
+        "food": 11.2,
+        "food_gt": 11.2,
+        "total": 13.43,
+        "total_gt": 13.43,
+        "total_pass": true,
+        "food_pass": true
+      }
+    ]
+  },
+  "flags": [],
+  "result": {
+    "event_details": {
+      "title": "Sanook Kitchen",
+      "date": "23/06/2026",
+      "currency": "SGD"
+    },
+    "receipt_summary": {
+      "subtotal": 37.0,
+      "tax": 3.66,
+      "tip": 3.7,
+      "grand_total": 44.36
+    },
+    "participants": [
+      {
+        "name": "Mevin",
+        "items_consumed": [
+          {
+            "item_name": "503 Deep-fried Chicken with Thai Herb",
+            "item_cost": 8.9
+          },
+          {
+            "item_name": "709 Thai Fragrant Steam Rice",
+            "item_cost": 2.4
+          },
+          {
+            "item_name": "507 Stir-fried Beef with Kai Lan (shared)",
+            "item_cost": 3.3
+          }
+        ],
+        "tax_and_tip_share": 2.9,
+        "total_owed": 17.5
+      },
+      {
+        "name": "Winston",
+        "items_consumed": [
+          {
+            "item_name": "701 Pineapple Fried Rice with Prawn",
+            "item_cost": 7.9
+          },
+          {
+            "item_name": "507 Stir-fried Beef with Kai Lan (shared)",
+            "item_cost": 3.3
+          }
+        ],
+        "tax_and_tip_share": 2.23,
+        "total_owed": 13.43
+      },
+      {
+        "name": "Albert",
+        "items_consumed": [
+          {
+            "item_name": "704 Honey Chicken Rice",
+            "item_cost": 7.9
+          },
+          {
+            "item_name": "507 Stir-fried Beef with Kai Lan (shared)",
+            "item_cost": 3.3
+          }
+        ],
+        "tax_and_tip_share": 2.23,
+        "total_owed": 13.43
+      }
+    ]
+  }
+}

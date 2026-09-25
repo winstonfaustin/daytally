@@ -109,6 +109,44 @@ def register_user(email: str, password: str, display_name: str) -> dict[str, Any
     return _session_payload(user, session, display_name)
 
 
+def refresh_user(refresh_token: str) -> dict[str, Any]:
+    import json
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    token = (refresh_token or "").strip()
+    if not token:
+        raise ValueError("Your sign-in expired. Sign in again to load your bills.")
+    url = _env("SUPABASE_URL").rstrip("/")
+    key = _env("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_KEY")
+    if not url or not key:
+        raise SupabaseNotConfigured(_missing_message())
+    req = Request(
+        f"{url}/auth/v1/token?grant_type=refresh_token",
+        data=json.dumps({"refresh_token": token}).encode(),
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode())
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ValueError("Your sign-in expired. Sign in again to load your bills.") from exc
+    access = str(body.get("access_token") or "")
+    new_refresh = str(body.get("refresh_token") or token)
+    if not access:
+        raise ValueError("Your sign-in expired. Sign in again to load your bills.")
+    return {
+        "user": user_from_token(access),
+        "access_token": access,
+        "refresh_token": new_refresh,
+    }
+
+
 def login_user(email: str, password: str) -> dict[str, Any]:
     client = get_anon_client()
     result = client.auth.sign_in_with_password({"email": email, "password": password})
@@ -420,7 +458,7 @@ def list_splits(user_id: str) -> list[dict[str, Any]]:
             "userId": row["user_id"],
             "savedAt": row.get("created_at"),
             "eventId": None,
-            "data": row.get("payload") or {},
+            "data": _as_prefs(row.get("payload")),
             "paid_by": row.get("paid_by"),
         }
         for row in rows

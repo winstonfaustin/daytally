@@ -1,5 +1,7 @@
+import json
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,13 +11,15 @@ load_dotenv(override=True)
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
-from services.gemini_service import split_bill_from_uploads
+from services.separated_pipeline import split_bill_separated
 from services import supabase_service as sb
 
 BASE_DIR = Path(__file__).resolve().parent
 # Vercel serverless allows writes only under /tmp
 UPLOAD_DIR = Path("/tmp/daytally_uploads") if os.getenv("VERCEL") else BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+FEEDBACK_DIR = BASE_DIR / "feedback"
+FEEDBACK_FILE = FEEDBACK_DIR / "responses.jsonl"
 
 ALLOWED_RECEIPT_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
 ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "m4a", "webm", "ogg", "aac"}
@@ -47,12 +51,86 @@ def _require_user() -> dict:
     token = _bearer_token()
     if not token:
         raise PermissionError("Please log in.")
-    return sb.user_from_token(token)
+    try:
+        return sb.user_from_token(token)
+    except Exception as exc:
+        message = str(exc).lower()
+        if "expired" in message or "invalid" in message or "log in" in message:
+            raise PermissionError("Please log in.") from exc
+        raise
 
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+def _feedback_user_ids():
+    if not FEEDBACK_FILE.exists():
+        return set()
+    found = set()
+    for line in FEEDBACK_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        user_id = row.get("user_id")
+        if user_id:
+            found.add(user_id)
+    return found
+
+
+@app.route("/api/feedback/mine", methods=["GET"])
+def feedback_mine():
+    try:
+        user = _require_user()
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    return jsonify({"submitted": user.get("id") in _feedback_user_ids()})
+
+
+@app.route("/api/feedback", methods=["POST"])
+def save_feedback():
+    try:
+        user = _require_user()
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    if user.get("id") in _feedback_user_ids():
+        return jsonify({"error": "You already sent feedback. One response per person."}), 409
+    body = request.get_json(silent=True) or {}
+    scores = body.get("scores") if isinstance(body.get("scores"), dict) else {}
+    clean = {}
+    for key in ("q1", "q2", "q3", "q4", "q5", "q6"):
+        try:
+            value = int(scores.get(key))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Each score must be from 1 to 5."}), 400
+        if value < 1 or value > 5:
+            return jsonify({"error": "Each score must be from 1 to 5."}), 400
+        clean[key] = value
+    timings = body.get("timings") if isinstance(body.get("timings"), dict) else {}
+    row = {
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "user_id": user.get("id"),
+        "scores": clean,
+        "confusing": str(body.get("confusing") or "").strip()[:500],
+        "change": str(body.get("change") or "").strip()[:500],
+        "trust": str(body.get("trust") or "").strip()[:500],
+        "path": str(body.get("path") or "").strip()[:40],
+        "timings": {
+            "ocr_s": timings.get("ocr_s"),
+            "transcribe_s": timings.get("transcribe_s"),
+            "fusion_s": timings.get("fusion_s"),
+        },
+        "heard": str(body.get("heard") or "").strip()[:500],
+    }
+    FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
+    with FEEDBACK_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return jsonify({"success": True})
 
 
 @app.route("/api/health/supabase", methods=["GET"])
@@ -109,6 +187,21 @@ def auth_google():
         return jsonify({"error": str(exc)}), 503
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/auth/refresh", methods=["POST"])
+def auth_refresh():
+    body = request.get_json(silent=True) or {}
+    refresh_token = str(body.get("refresh_token") or "").strip()
+    if not refresh_token:
+        return jsonify({"error": "Your sign-in expired. Sign in again to load your bills."}), 401
+    try:
+        payload = sb.refresh_user(refresh_token)
+        return jsonify({"success": True, **payload})
+    except sb.SupabaseNotConfigured as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception:
+        return jsonify({"error": "Your sign-in expired. Sign in again to load your bills."}), 401
 
 
 @app.route("/api/auth/session", methods=["POST"])
@@ -261,16 +354,29 @@ def process_bill():
     try:
         receipt_path = _save_upload(receipt_file, "receipt")
 
-        if has_text:
+        if os.getenv("VERCEL"):
+            from services.gemini_service import split_bill_from_uploads
+
+            if has_audio and not has_text:
+                audio_path = _save_upload(audio_file, "audio")
             result, debug = split_bill_from_uploads(
                 str(receipt_path),
+                audio_path=str(audio_path) if audio_path else None,
+                voice_text=voice_text_override or None,
+                fast=True,
+            )
+        elif has_text:
+            result, debug = split_bill_separated(
+                str(receipt_path),
                 voice_text=voice_text_override,
+                nodes="mixed",
             )
         else:
             audio_path = _save_upload(audio_file, "audio")
-            result, debug = split_bill_from_uploads(
+            result, debug = split_bill_separated(
                 str(receipt_path),
                 audio_path=str(audio_path),
+                nodes="mixed",
             )
 
         return jsonify(

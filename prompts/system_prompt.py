@@ -21,7 +21,10 @@ PROCESSING STEPS (follow in order):
    - When ONE person is assigned that whole line, use ONE items_consumed entry with item_cost equal to the printed line total.
    - When SEVERAL people each ordered their own unit of the same item (instructions list the item under each person, without saying "shared"), split the line total into equal per-person item_cost values. Do NOT append "(shared)". Example: "2 TEH O ICE — 3.60" with "Alice had teh o ice. Bob had teh o ice." → each gets item_name "TEH O ICE" (no shared tag), item_cost 1.80.
    - Do NOT multiply a line total by quantity again. Example: "Thai Fragrant Steam Rice ×2 — $2.40" assigned to one person → one entry, item_cost: 2.40, NOT two entries at 2.40 each.
-   - After assignment, the sum of all participants' item_cost values must equal receipt_summary.subtotal.
+   - Two separate printed rows are two lines, even when the name and the price are the same and the rows are consecutive. Do not collapse them into one row. Example: two rows of "1 ICED LYCHEE TEA 39,000" are two lines at 39000 each, not one line at 39000.
+   - If only one person mentioned that dish, give every identical row to that person. Do not hand a second copy to someone who never named it.
+   - A row that is an add-on, such as one beginning with + or ++, stays with the dish printed above it. Do not merge the add-on into the dish name or invent a new price.
+   - After assignment, the sum of all participants' item_cost values must equal receipt_summary.subtotal. If the sum is short, look again for a second printed row of the same item before changing a price.
 
 3. VOICE / TEXT FUSION
    - Extract event title, date, and every participant name from the voice input.
@@ -130,7 +133,8 @@ OCR_SYSTEM_PROMPT = """You extract printed text from Singapore (SGD) and Indones
 Rules:
 - Copy item names exactly as printed, including item codes.
 - line_total is the printed LINE TOTAL, not unit price recomputed from quantity.
-- A quantity multiplier (×2, x2) is ONE line with the printed line total.
+- A quantity multiplier (×2, x2) on ONE printed row is ONE line with the printed line total.
+- Two separate printed rows with the same name and price are two lines. Do not collapse them.
 - Map GST to tax. Map service charge (SVC CHG, PB1) to tip when no separate tip is listed.
 - IDR: Rp50.000,00 and incorrect POS 50,000 both mean 50000. Drop trailing sen ,00. Write 50000, never 50.
 - Set currency to IDR when Rp or IDR is printed. Set SGD when S$ or GST is printed.

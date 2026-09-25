@@ -1,3 +1,4 @@
+import io
 import json
 import mimetypes
 from pathlib import Path
@@ -29,21 +30,38 @@ def _parse_response(response) -> dict:
     raise RuntimeError("Gemini returned an empty response.")
 
 
+def _smaller_jpeg(path: Path) -> tuple[bytes, str]:
+    from PIL import Image
+
+    img = Image.open(path).convert("RGB")
+    img.thumbnail((1280, 1280))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    return buf.getvalue(), "image/jpeg"
+
+
 def split_bill_from_uploads(
     receipt_path: str,
     *,
     audio_path: str | None = None,
     voice_text: str | None = None,
     model: str | None = None,
+    fast: bool = False,
 ) -> tuple[dict, dict]:
     """Read receipt image and voice input via Gemini multimodal API and return structured bill split JSON."""
     client = build_client()
     model_name = resolve_model(model)
     receipt = Path(receipt_path)
-    image_mime = mimetypes.guess_type(receipt.name)[0] or "image/jpeg"
+    thinking = None
+    if fast:
+        image_bytes, image_mime = _smaller_jpeg(receipt)
+        thinking = types.ThinkingConfig(thinking_level="MINIMAL")
+    else:
+        image_bytes = receipt.read_bytes()
+        image_mime = mimetypes.guess_type(receipt.name)[0] or "image/jpeg"
 
     contents: list = [
-        types.Part.from_bytes(data=receipt.read_bytes(), mime_type=image_mime),
+        types.Part.from_bytes(data=image_bytes, mime_type=image_mime),
     ]
 
     if voice_text:
@@ -67,6 +85,7 @@ def split_bill_from_uploads(
             response_mime_type="application/json",
             response_schema=BillSplitResult,
             temperature=0.1,
+            thinking_config=thinking,
         ),
     )
 
