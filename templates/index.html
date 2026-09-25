@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme18">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme27">
 </head>
 <body>
   <div class="page hidden" id="app-shell">
@@ -79,7 +79,7 @@
           <div class="dropzone-content" id="receipt-placeholder">
             <span class="dropzone-icon">🧾</span>
             <p class="dropzone-title">Receipt preview</p>
-            <p class="dropzone-hint">PNG, JPG, WEBP</p>
+            <p class="dropzone-hint">A photo is enough</p>
           </div>
           <img class="receipt-preview hidden" id="receipt-preview" alt="Receipt preview">
         </div>
@@ -97,26 +97,42 @@
       <!-- Step 2: Who had what -->
       <section class="card wizard-panel hidden" id="step-voice">
         <h3 class="panel-title">Who had what</h3>
-        <p class="panel-desc">Name each person and the dish they ordered. Add shared plates on the last line. You do not type prices.</p>
+        <p class="panel-desc">One name and one dish per person. Shared plates go on the last line. You do not type prices.</p>
+        <p class="say-example">Example: Alex had the chicken rice. Sam had the iced tea. We shared the fries.</p>
 
         <div class="split-form" id="split-form">
           <div class="edit-field">
-            <label for="split-event">Event (optional)</label>
-            <input type="text" id="split-event" maxlength="80" placeholder="Dinner at Sanook" autocomplete="off">
+            <label for="split-event">Meal name (optional)</label>
+            <input type="text" id="split-event" maxlength="80" placeholder="Dinner" autocomplete="off">
           </div>
 
+          <div class="who-receipt-frame who-receipt-frame-type hidden">
+            <img class="receipt-preview who-receipt" id="who-receipt-type" alt="Receipt">
+            <div class="who-zoom">
+              <button type="button" data-zoom="out" aria-label="Zoom out">−</button>
+              <button type="button" data-zoom="in" aria-label="Zoom in">+</button>
+            </div>
+          </div>
           <p class="split-form-label">People</p>
           <div class="split-people" id="split-people"></div>
           <button type="button" class="btn-text" id="btn-add-person">+ Add person</button>
 
           <div class="edit-field split-shared-field">
-            <label for="split-shared">Shared by everyone (optional)</label>
+            <label for="split-shared">Shared plates (optional)</label>
             <input type="text" id="split-shared" maxlength="120" placeholder="beef, drinks" autocomplete="off">
           </div>
         </div>
 
         <details class="text-fallback">
-          <summary>Or speak instead</summary>
+          <summary>Or say it out loud</summary>
+          <p class="say-example">Say the name, then the dish, as printed on the receipt. Example: Alex had the chicken rice. Sam had the iced tea. We shared the fries.</p>
+          <div class="who-receipt-frame hidden">
+            <img class="receipt-preview who-receipt" id="who-receipt" alt="Receipt">
+            <div class="who-zoom">
+              <button type="button" data-zoom="out" aria-label="Zoom out">−</button>
+              <button type="button" data-zoom="in" aria-label="Zoom in">+</button>
+            </div>
+          </div>
           <div class="recorder">
             <button type="button" class="record-btn" id="record-btn" aria-label="Hold to record">
               <span class="record-icon" id="record-icon">🎙️</span>
@@ -145,7 +161,7 @@
         <div class="processing-steps hidden" id="processing-steps">
           <div class="proc-step active" data-proc="split">
             <span class="proc-dot"></span>
-            <span>Analyzing your receipt…</span>
+            <span>Working out the split…</span>
           </div>
         </div>
 
@@ -155,12 +171,12 @@
       <!-- Step 3: Review & edit -->
       <section class="card wizard-panel hidden" id="step-review">
         <h3 class="panel-title">Review before confirming</h3>
-        <p class="panel-desc">Check the details below. Who ordered what, GST, service charge, and each person's share are listed for you to edit before you confirm.</p>
+        <p class="panel-desc">Check who had each dish and what they owe. Fix a name or a dish here. You do not start the bill again.</p>
         <div class="review-flags hidden" id="review-flags" role="status"></div>
 
         <div class="edit-event">
           <div class="edit-field">
-            <label for="edit-title">Event</label>
+            <label for="edit-title">Meal name</label>
             <input type="text" id="edit-title">
           </div>
           <div class="edit-row">
@@ -180,11 +196,11 @@
 
         <div class="receipt-summary-edit" id="review-summary">
           <div class="edit-field">
-            <label for="edit-subtotal">Subtotal</label>
+            <label for="edit-subtotal">Food total</label>
             <input type="text" id="edit-subtotal" readonly>
           </div>
           <div class="edit-field">
-            <label for="edit-gst-percent">GST (%)</label>
+            <label for="edit-gst-percent">Tax, GST (%)</label>
             <input type="number" id="edit-gst-percent" step="0.01" min="0">
             <span class="field-amount" id="edit-tax-amount"></span>
           </div>
@@ -194,31 +210,31 @@
             <span class="field-amount" id="edit-tip-amount"></span>
           </div>
           <div class="edit-field">
-            <label for="edit-grand-total">Grand total</label>
+            <label for="edit-grand-total">Total to pay</label>
             <input type="text" id="edit-grand-total" readonly>
           </div>
         </div>
-        <p class="split-note">GST and service charge are split fairly based on what each person ordered. Change the percentages above to adjust.</p>
+        <p class="split-note">Tax and service charge follow each person's food. A bigger food share takes a bigger share of both. You can change the percentages above.</p>
 
         <div class="edit-field payer-field">
           <label for="edit-payer">Who paid the bill first?</label>
           <select id="edit-payer">
             <option value="">Select who fronted the money</option>
           </select>
-          <p class="field-hint">Everyone else owes this person their share. Makes “what do I owe?” clear in the chatbot.</p>
+          <p class="field-hint">Everyone else pays this person back.</p>
         </div>
 
         <div class="settle-pay-card" id="settle-pay-card">
-          <h3 class="section-title">How should friends repay them?</h3>
-          <p class="panel-desc">Attach a payment method to this split (yours, a DayTally friend’s saved methods, or typed in).</p>
+          <h3 class="section-title">How can friends pay them back?</h3>
+          <p class="panel-desc">Optional. Add a PayNow number, a bank, or e-money, or skip this.</p>
 
           <div class="edit-field">
-            <label for="settle-source">Payment source</label>
+            <label for="settle-source">Payback details</label>
             <select id="settle-source">
               <option value="none">Skip for now</option>
-              <option value="self">My saved payment methods</option>
-              <option value="friend">Friend’s DayTally account (email)</option>
-              <option value="manual">Enter account details manually</option>
+              <option value="self">Use my saved details</option>
+              <option value="friend">Use a friend's saved details</option>
+              <option value="manual">Type the details</option>
             </select>
           </div>
 
@@ -538,6 +554,6 @@
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme21"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme26"></script>
 </body>
 </html>

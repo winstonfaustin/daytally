@@ -322,6 +322,56 @@ body {
   object-fit: contain;
 }
 
+.who-receipt-frame {
+  position: relative;
+  height: 34vh;
+  margin: 0.75rem 0 0.5rem;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  touch-action: pan-x pan-y;
+}
+
+.who-receipt-frame-type {
+  position: sticky;
+  top: 0.4rem;
+  z-index: 4;
+  height: 28vh;
+  margin: 0 0 0.85rem;
+}
+
+.who-receipt {
+  display: block;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+}
+
+.who-zoom {
+  position: sticky;
+  bottom: 0.4rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: -2.4rem;
+  padding-right: 0.4rem;
+  pointer-events: none;
+}
+
+.who-zoom button {
+  pointer-events: auto;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #fff;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
 .dropzone-icon {
   font-size: 2.5rem;
   display: block;
@@ -457,6 +507,16 @@ body {
 .audio-preview audio {
   width: 100%;
   max-width: 360px;
+}
+
+.say-example {
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  line-height: 1.45;
 }
 
 .text-fallback {

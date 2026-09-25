@@ -379,6 +379,13 @@ function setReceiptFile(file) {
     receiptPreview.src = e.target.result;
     receiptPreview.classList.remove("hidden");
     receiptPlaceholder.classList.add("hidden");
+    document.querySelectorAll(".who-receipt-frame").forEach((frame) => {
+      const img = frame.querySelector(".who-receipt");
+      img.src = e.target.result;
+      img.style.width = "100%";
+      frame.dataset.scale = "1";
+      frame.classList.remove("hidden");
+    });
   };
   reader.readAsDataURL(file);
   btnToVoice.disabled = false;
@@ -387,6 +394,39 @@ function setReceiptFile(file) {
 
 receiptInput.addEventListener("change", () => {
   if (receiptInput.files[0]) setReceiptFile(receiptInput.files[0]);
+});
+
+document.querySelectorAll(".who-receipt-frame").forEach((frame) => {
+  const img = frame.querySelector(".who-receipt");
+  const applyZoom = (next) => {
+    const scale = Math.min(3, Math.max(1, next));
+    frame.dataset.scale = String(scale);
+    img.style.width = `${Math.round(scale * 100)}%`;
+  };
+  frame.querySelector("[data-zoom='in']").addEventListener("click", () => {
+    applyZoom(Number(frame.dataset.scale || 1) + 0.5);
+  });
+  frame.querySelector("[data-zoom='out']").addEventListener("click", () => {
+    applyZoom(Number(frame.dataset.scale || 1) - 0.5);
+  });
+  let pinchStart = 0;
+  let pinchScale = 1;
+  frame.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 2) return;
+    pinchStart = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    pinchScale = Number(frame.dataset.scale || 1);
+  }, { passive: true });
+  frame.addEventListener("touchmove", (e) => {
+    if (e.touches.length !== 2 || !pinchStart) return;
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    applyZoom(pinchScale * (dist / pinchStart));
+  }, { passive: true });
 });
 
 ["dragenter", "dragover"].forEach((evt) => {
@@ -1311,12 +1351,12 @@ function buildSummaryText(data) {
   if (payer) text += `Paid first by: ${payer}\n`;
   text += `\nWho owes what:\n`;
   participants.forEach((p) => {
-    const tag = payer && namesMatch(p.name, payer) ? " (paid the bill)" : payer ? ` → repay ${payer}` : "";
-    text += `• ${p.name}: ${formatMoney(p.total_owed, c)}${tag}\n`;
+    const tag = payer && namesMatch(p.name, payer) ? " (paid the bill)" : payer ? ` (repay ${payer})` : "";
+    text += `${p.name}: ${formatMoney(p.total_owed, c)}${tag}\n`;
     p.items_consumed.forEach((item) => {
-      text += `  - ${displayItemName(item.item_name)}: ${formatMoney(item.item_cost, c)}\n`;
+      text += `${displayItemName(item.item_name)}: ${formatMoney(item.item_cost, c)}\n`;
     });
-    text += `  (tax & service: ${formatMoney(p.tax_and_tip_share, c)})\n`;
+    text += `Tax & service: ${formatMoney(p.tax_and_tip_share, c)}\n\n`;
   });
   const payBlock = formatSettlePaymentBlock(data);
   if (payBlock) text += `\n${payBlock}`;
@@ -1581,6 +1621,13 @@ btnNewSplit.addEventListener("click", () => {
   receiptPreview.classList.add("hidden");
   receiptPreview.src = "";
   receiptPlaceholder.classList.remove("hidden");
+  document.querySelectorAll(".who-receipt-frame").forEach((frame) => {
+    const img = frame.querySelector(".who-receipt");
+    img.style.width = "100%";
+    frame.dataset.scale = "1";
+    img.removeAttribute("src");
+    frame.classList.add("hidden");
+  });
   receiptName.textContent = "";
   btnToVoice.disabled = true;
   document.getElementById("continue-hint")?.classList.remove("hidden");
