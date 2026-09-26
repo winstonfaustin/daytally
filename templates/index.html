@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme27">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme31">
 </head>
 <body>
   <div class="page hidden" id="app-shell">
@@ -240,11 +240,10 @@
 
           <div class="settle-friend-row hidden" id="settle-friend-row">
             <div class="edit-field">
-              <label for="settle-friend-email">Friend’s DayTally email</label>
-              <input type="email" id="settle-friend-email" placeholder="friend@email.com" autocomplete="email">
+              <label for="settle-friend-select">Accepted friend</label>
+              <select id="settle-friend-select"></select>
             </div>
-            <button type="button" class="btn-secondary" id="btn-lookup-friend-pay">Look up</button>
-            <p class="field-hint" id="settle-friend-status"></p>
+            <p class="field-hint" id="settle-friend-status">Add them under Profile. Their number stays hidden until they accept.</p>
           </div>
 
           <div class="edit-field hidden" id="settle-method-field">
@@ -376,7 +375,10 @@
           <p class="panel-desc hidden" id="study-thanks">Saved. Thank you. One response per person.</p>
         </section>
 
-        <button type="button" class="btn-primary btn-new-split" id="btn-new-split">Start new split</button>
+        <div class="btn-row done-row">
+          <button type="button" class="btn-primary btn-new-split" id="btn-new-split">Done</button>
+        </div>
+        <p class="panel-desc">Done leaves this summary. The bill stays in History.</p>
       </section>
     </main>
 
@@ -477,6 +479,21 @@
           </div>
         </form>
       </section>
+
+      <section class="card" id="friends-card">
+        <h3 class="panel-title">Friends</h3>
+        <p class="panel-desc">Add someone with their DayTally email. Their PayNow or bank number stays hidden until they accept.</p>
+        <div id="friend-requests" class="friend-list"></div>
+        <div id="friend-list" class="friend-list"></div>
+        <form id="friend-add-form" class="friend-add-form">
+          <div class="edit-field">
+            <label for="friend-email">Their DayTally email</label>
+            <input type="email" id="friend-email" placeholder="friend@email.com" autocomplete="email" required>
+          </div>
+          <button type="submit" class="btn-secondary">Add friend</button>
+        </form>
+        <p class="field-hint" id="friend-status"></p>
+      </section>
     </main>
 
     <footer class="footer">
@@ -554,6 +571,6 @@
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme26"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme32"></script>
 </body>
 </html>

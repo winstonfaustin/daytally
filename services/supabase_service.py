@@ -269,48 +269,285 @@ def get_profile(user_id: str) -> dict[str, Any]:
     }
 
 
-def lookup_payment_methods_by_email(email: str) -> dict[str, Any]:
-    """Return another user's public payment methods by exact email (auth required by caller)."""
+def _auth_and_prefs(user_id: str) -> tuple[Any, dict[str, Any], str]:
+    admin = get_admin_client()
+    auth_user = admin.auth.admin.get_user_by_id(user_id).user
+    if not auth_user:
+        raise ValueError("User not found.")
+    row: dict[str, Any] = {}
+    try:
+        result = admin.table("profiles").select("*").eq("id", user_id).limit(1).execute()
+        rows = result.data or []
+        row = rows[0] if rows else {}
+    except Exception:
+        row = {}
+    meta = getattr(auth_user, "user_metadata", None) or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    prefs = {**_as_prefs(meta.get("preferences")), **_as_prefs(row.get("preferences"))}
+    for key in (
+        "payment_profiles",
+        "default_payment_id",
+        "payment_method",
+        "payment_handle",
+        "bank_name",
+        "account_number",
+        "payment_note",
+        "friends",
+    ):
+        if key not in prefs and meta.get(key) not in (None, ""):
+            prefs[key] = meta[key]
+    display_name = (
+        (meta.get("display_name") or "").strip()
+        or (row.get("display_name") or "").strip()
+        or _display_name_for(auth_user)
+    )
+    return auth_user, prefs, display_name
+
+
+def _write_user_prefs(user_id: str, display_name: str, prefs: dict[str, Any]) -> None:
+    admin = get_admin_client()
+    auth_user = admin.auth.admin.get_user_by_id(user_id).user
+    meta = getattr(auth_user, "user_metadata", None) or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    meta = dict(meta)
+    meta["display_name"] = display_name
+    meta["full_name"] = display_name
+    meta["name"] = display_name
+    meta["preferences"] = prefs
+    meta["payment_profiles"] = prefs.get("payment_profiles") or []
+    meta["default_payment_id"] = prefs.get("default_payment_id") or ""
+    admin.auth.admin.update_user_by_id(user_id, {"user_metadata": meta})
+    payload = {"id": user_id, "display_name": display_name, "preferences": prefs}
+    try:
+        admin.table("profiles").upsert(payload).execute()
+    except Exception:
+        admin.table("profiles").upsert(
+            {"id": user_id, "display_name": display_name}
+        ).execute()
+
+
+def _normalize_friends(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw[:40]:
+        if not isinstance(item, dict):
+            continue
+        friend_id = str(item.get("id") or "").strip()
+        other_id = str(item.get("user_id") or "").strip()
+        status = str(item.get("status") or "").strip()
+        role = str(item.get("role") or "").strip()
+        if not friend_id or not other_id:
+            continue
+        if status not in ("pending", "accepted") or role not in ("incoming", "outgoing"):
+            continue
+        if friend_id in seen:
+            continue
+        seen.add(friend_id)
+        out.append(
+            {
+                "id": friend_id[:40],
+                "user_id": other_id,
+                "email": str(item.get("email") or "").strip().lower()[:80],
+                "name": str(item.get("name") or "").strip()[:40],
+                "status": status,
+                "role": role,
+            }
+        )
+    return out
+
+
+def _find_user_by_email(email: str) -> tuple[str, str, str] | None:
     cleaned = str(email or "").strip().lower()
     if not cleaned or "@" not in cleaned:
         raise ValueError("Enter a valid email address.")
-
     admin = get_admin_client()
-    user_id = None
-    display_hint = ""
-
     getter = getattr(admin.auth.admin, "get_user_by_email", None)
     if callable(getter):
         try:
             result = getter(cleaned)
             auth_user = getattr(result, "user", None) or result
             user_id = getattr(auth_user, "id", None)
-            display_hint = _display_name_for(auth_user)
+            if user_id:
+                return str(user_id), _display_name_for(auth_user), cleaned
         except Exception:
-            user_id = None
+            pass
+    try:
+        listed = admin.auth.admin.list_users()
+        users = getattr(listed, "users", None) or listed or []
+        for auth_user in users:
+            if str(getattr(auth_user, "email", "") or "").strip().lower() == cleaned:
+                return str(auth_user.id), _display_name_for(auth_user), cleaned
+    except Exception as exc:
+        raise ValueError("Could not look up that email right now.") from exc
+    return None
 
-    if not user_id:
-        try:
-            listed = admin.auth.admin.list_users()
-            users = getattr(listed, "users", None) or listed or []
-            for auth_user in users:
-                if str(getattr(auth_user, "email", "") or "").strip().lower() == cleaned:
-                    user_id = auth_user.id
-                    display_hint = _display_name_for(auth_user)
-                    break
-        except Exception as exc:
-            raise ValueError("Could not look up that email right now.") from exc
 
-    if not user_id:
-        raise ValueError("No DayTally account found for that email.")
+def _save_friends(user_id: str, friends: list[dict[str, str]]) -> None:
+    _auth_user, prefs, display_name = _auth_and_prefs(user_id)
+    prefs = dict(prefs)
+    prefs["friends"] = _normalize_friends(friends)
+    _write_user_prefs(user_id, display_name, prefs)
 
-    profile = get_profile(user_id)
-    return {
-        "email": profile.get("email") or cleaned,
-        "name": profile.get("name") or display_hint or cleaned.split("@")[0],
-        "payment_profiles": profile.get("payment_profiles") or [],
-        "default_payment_id": profile.get("default_payment_id") or "",
+
+def _friend_public(row: dict[str, str], include_payments: bool) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": row["id"],
+        "email": row.get("email") or "",
+        "name": row.get("name") or row.get("email") or "Friend",
+        "status": row["status"],
+        "role": row["role"],
     }
+    if include_payments and row["status"] == "accepted":
+        try:
+            other = get_profile(row["user_id"])
+            item["payment_profiles"] = other.get("payment_profiles") or []
+            item["default_payment_id"] = other.get("default_payment_id") or ""
+        except Exception:
+            item["payment_profiles"] = []
+            item["default_payment_id"] = ""
+    return item
+
+
+def list_friends(user_id: str) -> list[dict[str, Any]]:
+    _auth_user, prefs, _display_name = _auth_and_prefs(user_id)
+    return [
+        _friend_public(row, include_payments=True)
+        for row in _normalize_friends(prefs.get("friends"))
+    ]
+
+
+def request_friend(user_id: str, email: str) -> dict[str, Any]:
+    found = _find_user_by_email(email)
+    if not found:
+        raise ValueError("No DayTally account found for that email.")
+    other_id, other_name, other_email = found
+    if other_id == user_id:
+        raise ValueError("That is your own email.")
+
+    me_auth, me_prefs, me_name = _auth_and_prefs(user_id)
+    my_email = str(getattr(me_auth, "email", "") or "").strip().lower()
+    me_friends = _normalize_friends(me_prefs.get("friends"))
+    existing = next((row for row in me_friends if row["user_id"] == other_id), None)
+    if existing and existing["status"] == "accepted":
+        raise ValueError("You are already friends.")
+    if existing and existing["role"] == "outgoing":
+        raise ValueError("Request already sent. They need to accept it.")
+    if existing and existing["role"] == "incoming":
+        accept_friend(user_id, existing["id"])
+        return _friend_public({**existing, "status": "accepted"}, include_payments=False)
+
+    _other_auth, other_prefs, _other_display = _auth_and_prefs(other_id)
+    other_friends = _normalize_friends(other_prefs.get("friends"))
+    mirror = next((row for row in other_friends if row["user_id"] == user_id), None)
+    if mirror and mirror["role"] == "outgoing":
+        friend_id = mirror["id"]
+        if not any(row["id"] == friend_id for row in me_friends):
+            me_friends.append(
+                {
+                    "id": friend_id,
+                    "user_id": other_id,
+                    "email": other_email,
+                    "name": other_name,
+                    "status": "accepted",
+                    "role": "incoming",
+                }
+            )
+        for row in me_friends:
+            if row["id"] == friend_id:
+                row["status"] = "accepted"
+        for row in other_friends:
+            if row["id"] == friend_id or row["user_id"] == user_id:
+                row["status"] = "accepted"
+        _save_friends(user_id, me_friends)
+        _save_friends(other_id, other_friends)
+        saved = next(row for row in me_friends if row["user_id"] == other_id)
+        return _friend_public(saved, include_payments=False)
+
+    friend_id = f"fr_{uuid.uuid4().hex[:12]}"
+    me_friends.append(
+        {
+            "id": friend_id,
+            "user_id": other_id,
+            "email": other_email,
+            "name": other_name,
+            "status": "pending",
+            "role": "outgoing",
+        }
+    )
+    other_friends.append(
+        {
+            "id": friend_id,
+            "user_id": user_id,
+            "email": my_email,
+            "name": me_name,
+            "status": "pending",
+            "role": "incoming",
+        }
+    )
+    _save_friends(user_id, me_friends)
+    _save_friends(other_id, other_friends)
+    return _friend_public(me_friends[-1], include_payments=False)
+
+
+def accept_friend(user_id: str, friend_id: str) -> None:
+    _auth_user, prefs, _display_name = _auth_and_prefs(user_id)
+    friends = _normalize_friends(prefs.get("friends"))
+    row = next((item for item in friends if item["id"] == friend_id), None)
+    if not row:
+        raise ValueError("That request is not on your account.")
+    if row["status"] == "accepted":
+        return
+    if row["role"] != "incoming":
+        raise ValueError("Only the person who was asked can accept.")
+    for item in friends:
+        if item["id"] == friend_id:
+            item["status"] = "accepted"
+    _save_friends(user_id, friends)
+    _other_auth, other_prefs, _other_name = _auth_and_prefs(row["user_id"])
+    other_friends = _normalize_friends(other_prefs.get("friends"))
+    found = False
+    for item in other_friends:
+        if item["id"] == friend_id or item["user_id"] == user_id:
+            item["status"] = "accepted"
+            item["id"] = friend_id
+            found = True
+    if not found:
+        me_email = str(getattr(_auth_user, "email", "") or "").strip().lower()
+        _me_auth, _me_prefs, me_name = _auth_and_prefs(user_id)
+        other_friends.append(
+            {
+                "id": friend_id,
+                "user_id": user_id,
+                "email": me_email,
+                "name": me_name,
+                "status": "accepted",
+                "role": "outgoing",
+            }
+        )
+    _save_friends(row["user_id"], other_friends)
+
+
+def remove_friend(user_id: str, friend_id: str) -> None:
+    _auth_user, prefs, _display_name = _auth_and_prefs(user_id)
+    friends = _normalize_friends(prefs.get("friends"))
+    row = next((item for item in friends if item["id"] == friend_id), None)
+    if not row:
+        raise ValueError("That friend is not on your account.")
+    _save_friends(user_id, [item for item in friends if item["id"] != friend_id])
+    try:
+        _other_auth, other_prefs, _other_name = _auth_and_prefs(row["user_id"])
+    except Exception:
+        return
+    other_friends = [
+        item
+        for item in _normalize_friends(other_prefs.get("friends"))
+        if item["id"] != friend_id and item["user_id"] != user_id
+    ]
+    _save_friends(row["user_id"], other_friends)
 
 
 def update_profile(user_id: str, updates: dict[str, Any]) -> dict[str, Any]:
@@ -325,34 +562,13 @@ def update_profile(user_id: str, updates: dict[str, Any]) -> dict[str, Any]:
     if not default_payment_id and profiles:
         default_payment_id = profiles[0]["id"]
 
+    _auth_user, existing_prefs, _existing_name = _auth_and_prefs(user_id)
     prefs = {
         "payment_profiles": profiles,
         "default_payment_id": default_payment_id,
+        "friends": _normalize_friends(existing_prefs.get("friends")),
     }
-
-    admin = get_admin_client()
-    admin.auth.admin.update_user_by_id(
-        user_id,
-        {
-            "user_metadata": {
-                "display_name": display_name,
-                "full_name": display_name,
-                "name": display_name,
-                "preferences": prefs,
-                "payment_profiles": profiles,
-                "default_payment_id": default_payment_id,
-            }
-        },
-    )
-
-    payload = {"id": user_id, "display_name": display_name, "preferences": prefs}
-    try:
-        admin.table("profiles").upsert(payload).execute()
-    except Exception:
-        admin.table("profiles").upsert(
-            {"id": user_id, "display_name": display_name}
-        ).execute()
-
+    _write_user_prefs(user_id, display_name, prefs)
     return get_profile(user_id)
 
 
@@ -365,7 +581,9 @@ def _normalize_payment_profiles(raw: Any) -> list[dict[str, str]]:
             continue
         label = str(item.get("label") or "").strip()[:40]
         method = str(item.get("method") or "").strip()[:40]
-        if not label and not method:
+        handle = str(item.get("handle") or "").strip()[:80]
+        account_number = str(item.get("account_number") or "").strip()[:80]
+        if not handle and not account_number:
             continue
         pid = str(item.get("id") or "").strip() or f"pay_{uuid.uuid4().hex[:10]}"
         out.append(
@@ -373,9 +591,9 @@ def _normalize_payment_profiles(raw: Any) -> list[dict[str, str]]:
                 "id": pid[:40],
                 "label": label or method or "Payment",
                 "method": method,
-                "handle": str(item.get("handle") or "").strip()[:80],
+                "handle": handle,
                 "bank_name": str(item.get("bank_name") or "").strip()[:80],
-                "account_number": str(item.get("account_number") or "").strip()[:80],
+                "account_number": account_number,
                 "note": str(item.get("note") or "").strip()[:200],
             }
         )
@@ -389,7 +607,7 @@ def _legacy_payment_profiles(merged: dict[str, Any]) -> list[dict[str, str]]:
     bank = str(merged.get("bank_name") or "").strip()
     account = str(merged.get("account_number") or "").strip()
     note = str(merged.get("payment_note") or "").strip()
-    if not any([method, handle, bank, account, note]):
+    if not handle and not account:
         return []
     return [
         {
@@ -497,6 +715,28 @@ def save_event(user_id: str, event: dict[str, Any]) -> dict[str, Any]:
         "splitIds": saved.get("split_ids") or [],
         "createdAt": saved.get("created_at"),
     }
+
+
+def delete_split(user_id: str, split_id: str) -> None:
+    admin = get_admin_client()
+    (
+        admin.table("splits")
+        .delete()
+        .eq("id", split_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+
+def delete_event(user_id: str, event_id: str) -> None:
+    admin = get_admin_client()
+    (
+        admin.table("events")
+        .delete()
+        .eq("id", event_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
 
 
 def list_events(user_id: str) -> list[dict[str, Any]]:

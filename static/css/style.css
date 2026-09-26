@@ -1716,6 +1716,39 @@ body {
   margin-top: 1.25rem;
 }
 
+.friend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.75rem 0;
+}
+
+.friend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.7rem 0.85rem;
+}
+
+.friend-row p {
+  margin: 0.15rem 0 0;
+}
+
+.friend-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.friend-add-form .edit-field {
+  flex: 1 1 14rem;
+  margin: 0;
+}
+
 .payment-profiles-list {
   display: flex;
   flex-direction: column;

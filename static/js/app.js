@@ -11,6 +11,8 @@ const state = {
   selectedPaymentId: "",
   settleProfiles: [],
   settleFriend: null,
+  view: "new",
+  friends: [],
 };
 
 const THEME_KEY = "daytally_theme";
@@ -137,9 +139,13 @@ const sharePayField = document.getElementById("share-pay-field");
 const sharePaymentProfile = document.getElementById("share-payment-profile");
 const settleSource = document.getElementById("settle-source");
 const settleFriendRow = document.getElementById("settle-friend-row");
-const settleFriendEmail = document.getElementById("settle-friend-email");
-const btnLookupFriendPay = document.getElementById("btn-lookup-friend-pay");
+const settleFriendSelect = document.getElementById("settle-friend-select");
 const settleFriendStatus = document.getElementById("settle-friend-status");
+const friendRequests = document.getElementById("friend-requests");
+const friendList = document.getElementById("friend-list");
+const friendAddForm = document.getElementById("friend-add-form");
+const friendEmail = document.getElementById("friend-email");
+const friendStatus = document.getElementById("friend-status");
 const settleMethodField = document.getElementById("settle-method-field");
 const settleMethodSelect = document.getElementById("settle-method-select");
 const settleManual = document.getElementById("settle-manual");
@@ -225,6 +231,7 @@ function setWizardStep(step, options) {
   stepResults.classList.toggle("hidden", step !== 4);
 
   if (step === 4) showStudyCard(!!(options && options.feedback));
+  syncFriendPolling();
 }
 
 function addPersonRow(name = "", item = "") {
@@ -308,6 +315,10 @@ function updateProcessButton() {
 
 /* ── Navigation ── */
 function switchView(view) {
+  if (state.view === "new" && view !== "new" && state.step === 4) {
+    resetWizard();
+  }
+  state.view = view;
   viewNew.classList.toggle("hidden", view !== "new");
   viewHistory.classList.toggle("hidden", view !== "history");
   viewCalendar.classList.toggle("hidden", view !== "calendar");
@@ -321,7 +332,11 @@ function switchView(view) {
   if (view === "history") renderHistory();
   if (view === "calendar") renderCalendar();
   if (view === "chat") ensureChatWelcome();
-  if (view === "profile") fillProfileForm();
+  if (view === "profile") {
+    fillProfileForm();
+    loadFriends();
+  }
+  syncFriendPolling();
 }
 
 navNew.addEventListener("click", () => switchView("new"));
@@ -882,7 +897,7 @@ function fillPayerSelect(data) {
 
 function fillSettleMethodSelect(profiles, preferredId) {
   if (!settleMethodSelect) return;
-  const list = Array.isArray(profiles) ? profiles : [];
+  const list = (Array.isArray(profiles) ? profiles : []).filter(paymentHasDestination);
   settleMethodSelect.innerHTML = list.length
     ? list
         .map(
@@ -921,9 +936,54 @@ function syncSettlePayUI() {
       settleFriendStatus.textContent = "";
     }
   } else if (source === "friend") {
-    const profiles = state.settleProfiles || [];
-    fillSettleMethodSelect(profiles, state.settleFriend?.default_payment_id);
-    if (settleMethodField) settleMethodField.classList.toggle("hidden", !profiles.length);
+    const accepted = (state.friends || []).filter((friend) => friend.status === "accepted");
+    const previousFriend = settleFriendSelect?.value || "";
+    const previousMethod = settleMethodSelect?.value || "";
+    if (settleFriendSelect) {
+      settleFriendSelect.innerHTML = accepted.length
+        ? accepted
+            .map(
+              (friend) =>
+                `<option value="${escapeHtml(friend.id)}">${escapeHtml(friend.name || friend.email)}</option>`
+            )
+            .join("")
+        : '<option value="">No accepted friends yet</option>';
+      if (previousFriend && accepted.some((friend) => friend.id === previousFriend)) {
+        settleFriendSelect.value = previousFriend;
+      }
+    }
+    const chosen =
+      accepted.find((friend) => friend.id === settleFriendSelect?.value) || accepted[0] || null;
+    if (!chosen) {
+      state.settleFriend = null;
+      state.settleProfiles = [];
+      if (settleMethodField) settleMethodField.classList.add("hidden");
+      if (settleFriendStatus) {
+        settleFriendStatus.textContent =
+          "Add them under Profile. Their number stays hidden until they accept.";
+      }
+    } else {
+      state.settleFriend = {
+        name: chosen.name,
+        email: chosen.email,
+        default_payment_id: chosen.default_payment_id || "",
+      };
+      state.settleProfiles = Array.isArray(chosen.payment_profiles) ? chosen.payment_profiles : [];
+      fillSettleMethodSelect(state.settleProfiles, chosen.default_payment_id);
+      if (
+        previousMethod &&
+        state.settleProfiles.some((profile) => profile.id === previousMethod && paymentHasDestination(profile))
+      ) {
+        settleMethodSelect.value = previousMethod;
+      }
+      const usable = state.settleProfiles.some(paymentHasDestination);
+      if (settleMethodField) settleMethodField.classList.toggle("hidden", !usable);
+      if (settleFriendStatus) {
+        settleFriendStatus.textContent = usable
+          ? ""
+          : `${chosen.name} has not saved a phone or bank number yet.`;
+      }
+    }
   } else if (source === "manual") {
     if (settleMethodField) settleMethodField.classList.add("hidden");
   } else {
@@ -951,16 +1011,14 @@ function collectSettlePayment() {
       account_number: needsBank ? (settleAccount?.value || "").trim() : "",
       note: (settleNote?.value || "").trim(),
     };
-    if (!snap.method && !snap.handle && !snap.bank_name && !snap.account_number && !snap.note && !snap.label) {
-      return null;
-    }
+    if (!paymentHasDestination(snap)) return null;
     return snap;
   }
 
   const profiles = state.settleProfiles || [];
   const selectedId = settleMethodSelect?.value || "";
   const profile = profiles.find((p) => p.id === selectedId) || profiles[0];
-  if (!profile) return null;
+  if (!profile || !paymentHasDestination(profile)) return null;
   return {
     source,
     owner_name: state.settleFriend?.name || payer,
@@ -975,54 +1033,171 @@ function collectSettlePayment() {
   };
 }
 
-async function lookupFriendPaymentMethods() {
-  if (!settleFriendStatus) return;
-  settleFriendStatus.textContent = "Looking up…";
-  const email = (settleFriendEmail?.value || "").trim().toLowerCase();
-  try {
-    const res = await fetch(
-      `/api/users/payment-methods?email=${encodeURIComponent(email)}`,
-      { headers: authHeaders() }
-    );
-    const payload = await res.json();
-    if (!res.ok) throw new Error(payload.error || "Lookup failed.");
-    state.settleFriend = {
-      name: payload.name,
-      email: payload.email,
-      default_payment_id: payload.default_payment_id || "",
-    };
-    state.settleProfiles = Array.isArray(payload.payment_profiles)
-      ? payload.payment_profiles
-      : [];
-    fillSettleMethodSelect(state.settleProfiles, state.settleFriend.default_payment_id);
-    if (settleMethodField) {
-      settleMethodField.classList.toggle("hidden", !state.settleProfiles.length);
+function friendRow(friend, actions) {
+  const row = document.createElement("div");
+  row.className = "friend-row";
+  const text = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = friend.name || friend.email;
+  const detail = document.createElement("p");
+  detail.className = "field-hint";
+  detail.textContent = friend.email || "";
+  text.append(title, detail);
+  const buttons = document.createElement("div");
+  buttons.className = "btn-row";
+  actions.forEach((action) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = action.danger ? "btn-text danger" : "btn-secondary";
+    button.textContent = action.label;
+    button.addEventListener("click", action.onClick);
+    buttons.appendChild(button);
+  });
+  row.append(text, buttons);
+  return row;
+}
+
+let friendPollTimer = null;
+
+function friendWatchIsOpen() {
+  if (!getSession()?.access_token) return false;
+  if (state.view === "profile") return true;
+  return state.view === "new" && state.step === 3 && settleSource?.value === "friend";
+}
+
+function syncFriendPolling() {
+  if (friendWatchIsOpen()) {
+    if (!friendPollTimer) {
+      friendPollTimer = setInterval(() => {
+        if (!friendWatchIsOpen()) {
+          clearInterval(friendPollTimer);
+          friendPollTimer = null;
+          return;
+        }
+        loadFriends({ quiet: true });
+      }, 3000);
     }
-    if (!state.settleProfiles.length) {
-      settleFriendStatus.textContent = `Found ${payload.name}, but they have no saved payment methods yet. Use manual entry or ask them to add methods in Profile.`;
-    } else {
-      settleFriendStatus.textContent = `Found ${payload.name} · ${state.settleProfiles.length} payment method(s).`;
-    }
-  } catch (err) {
-    state.settleProfiles = [];
-    state.settleFriend = null;
-    if (settleMethodField) settleMethodField.classList.add("hidden");
-    settleFriendStatus.textContent = err.message || "Lookup failed.";
+    return;
   }
+  if (friendPollTimer) {
+    clearInterval(friendPollTimer);
+    friendPollTimer = null;
+  }
+}
+
+async function loadFriends(options) {
+  const quiet = !!(options && options.quiet);
+  if (!getSession()?.access_token) return;
+  try {
+    const response = await fetch("/api/friends", { headers: authHeaders() });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not load friends.");
+    const incoming = Array.isArray(payload.friends) ? payload.friends : [];
+    const same = JSON.stringify(incoming) === JSON.stringify(state.friends);
+    state.friends = incoming;
+    if (quiet && same) return;
+  } catch (err) {
+    if (quiet) return;
+    state.friends = [];
+    if (friendStatus) friendStatus.textContent = err.message || "Could not load friends.";
+  }
+  renderFriends();
+  if (settleSource?.value === "friend") syncSettlePayUI();
+}
+
+function renderFriends() {
+  if (!friendRequests || !friendList) return;
+  friendRequests.innerHTML = "";
+  friendList.innerHTML = "";
+  const incoming = state.friends.filter((friend) => friend.role === "incoming" && friend.status === "pending");
+  const outgoing = state.friends.filter((friend) => friend.role === "outgoing" && friend.status === "pending");
+  const accepted = state.friends.filter((friend) => friend.status === "accepted");
+  incoming.forEach((friend) => {
+    friendRequests.appendChild(
+      friendRow(friend, [
+        { label: "Accept", onClick: () => respondToFriend(friend.id, "accept") },
+        { label: "Decline", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
+      ])
+    );
+  });
+  accepted.forEach((friend) => {
+    friendList.appendChild(
+      friendRow(friend, [
+        { label: "Remove", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
+      ])
+    );
+  });
+  outgoing.forEach((friend) => {
+    const row = friendRow(friend, [
+      { label: "Cancel", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
+    ]);
+    const waiting = document.createElement("p");
+    waiting.className = "field-hint";
+    waiting.textContent = "Waiting for them to accept.";
+    row.querySelector("div").appendChild(waiting);
+    friendList.appendChild(row);
+  });
+}
+
+async function respondToFriend(id, action) {
+  const path = action === "accept" ? `/api/friends/${id}/accept` : `/api/friends/${id}`;
+  const method = action === "accept" ? "POST" : "DELETE";
+  if (friendStatus) friendStatus.textContent = "";
+  try {
+    const response = await fetch(path, { method, headers: authHeaders() });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not update that friend.");
+    await loadFriends();
+  } catch (err) {
+    if (friendStatus) friendStatus.textContent = err.message || "Could not update that friend.";
+  }
+}
+
+async function addFriend(email) {
+  if (friendStatus) friendStatus.textContent = "Sending request…";
+  const response = await fetch("/api/friends", {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ email }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Could not add that friend.");
+  if (friendEmail) friendEmail.value = "";
+  if (friendStatus) {
+    friendStatus.textContent =
+      payload.friend?.status === "accepted"
+        ? "You are now friends."
+        : "Request sent. Their number stays hidden until they accept.";
+  }
+  await loadFriends();
 }
 
 if (settleSource) {
   settleSource.addEventListener("change", () => {
-    if (settleSource.value !== "friend") {
-      state.settleProfiles = [];
-      state.settleFriend = null;
-      if (settleFriendStatus) settleFriendStatus.textContent = "";
+    if (settleSource.value === "friend") {
+      loadFriends();
+      syncFriendPolling();
+      return;
     }
+    state.settleProfiles = [];
+    state.settleFriend = null;
+    if (settleFriendStatus) settleFriendStatus.textContent = "";
     syncSettlePayUI();
+    syncFriendPolling();
   });
 }
-if (btnLookupFriendPay) {
-  btnLookupFriendPay.addEventListener("click", () => lookupFriendPaymentMethods());
+if (settleFriendSelect) {
+  settleFriendSelect.addEventListener("change", () => syncSettlePayUI());
+}
+if (friendAddForm) {
+  friendAddForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await addFriend((friendEmail?.value || "").trim().toLowerCase());
+    } catch (err) {
+      if (friendStatus) friendStatus.textContent = err.message || "Could not add that friend.";
+    }
+  });
 }
 
 function buildEditParticipantCard(data, person, pIdx) {
@@ -1384,6 +1559,13 @@ function buildPersonMessage(data, person) {
   return text;
 }
 
+function paymentHasDestination(pay) {
+  if (!pay) return false;
+  const phone = String(pay.handle || "").trim();
+  const account = String(pay.account_number || "").trim();
+  return !!(phone || account);
+}
+
 function formatSettlePaymentBlock(data) {
   const payer = data?.paid_by || "";
   if (!payer) return "";
@@ -1395,15 +1577,17 @@ function formatSettlePaymentBlock(data) {
       if (pay) pay = { ...pay, owner_name: user.name };
     }
   }
-  if (!pay) return "";
+  if (!paymentHasDestination(pay)) return "";
   const owner = pay.owner_name || payer;
   const lines = [];
   if (pay.method) lines.push(`Pay via: ${pay.method}`);
   if (pay.label) lines.push(`Account name: ${pay.label}`);
-  if (pay.handle) lines.push(`Phone: ${pay.handle}`);
+  const phone = String(pay.handle || "").trim();
+  if (phone) lines.push(`Phone: ${phone}`);
   if (methodNeedsBank(pay.method) && pay.bank_name) lines.push(`Bank: ${pay.bank_name}`);
-  if (methodNeedsBank(pay.method) && pay.account_number) {
-    lines.push(`Account number: ${pay.account_number}`);
+  const account = String(pay.account_number || "").trim();
+  if (methodNeedsBank(pay.method) && account) {
+    lines.push(`Account number: ${account}`);
   }
   if (pay.note) lines.push(pay.note);
   if (!lines.length) return "";
@@ -1412,7 +1596,9 @@ function formatSettlePaymentBlock(data) {
 
 function getSelectedPaymentProfile() {
   const user = getCurrentUser();
-  const profiles = Array.isArray(user?.payment_profiles) ? user.payment_profiles : [];
+  const profiles = (Array.isArray(user?.payment_profiles) ? user.payment_profiles : []).filter(
+    paymentHasDestination
+  );
   if (!profiles.length) return null;
   const id = state.selectedPaymentId || user.default_payment_id || profiles[0].id;
   return profiles.find((p) => p.id === id) || profiles[0];
@@ -1430,7 +1616,9 @@ function syncSharePaymentSelect(data) {
     return;
   }
   const user = getCurrentUser();
-  const profiles = Array.isArray(user?.payment_profiles) ? user.payment_profiles : [];
+  const profiles = (Array.isArray(user?.payment_profiles) ? user.payment_profiles : []).filter(
+    paymentHasDestination
+  );
   const show =
     !!data?.paid_by &&
     !!user?.name &&
@@ -1610,13 +1798,14 @@ document.getElementById("btn-study-submit")?.addEventListener("click", async () 
   }
 });
 
-btnNewSplit.addEventListener("click", () => {
+function resetWizard() {
   state.receiptFile = null;
   state.audioBlob = null;
   state.draftData = null;
   state.draftFlags = [];
   renderReviewFlags([]);
   state.confirmedData = null;
+  state.lastHistoryId = null;
   receiptInput.value = "";
   receiptPreview.classList.add("hidden");
   receiptPreview.src = "";
@@ -1636,6 +1825,10 @@ btnNewSplit.addEventListener("click", () => {
   hideError();
   setWizardStep(1);
   showStudyCard(false);
+}
+
+btnNewSplit.addEventListener("click", () => {
+  resetWizard();
   switchView("new");
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
@@ -1929,13 +2122,15 @@ function collectPaymentProfilesFromForm() {
         note: card.querySelector(".pay-note")?.value.trim() || "",
       };
     })
-    .filter((p) => p.label || p.method || p.handle || p.bank_name || p.account_number || p.note);
+    .filter((p) => paymentHasDestination(p));
   let default_payment_id = "";
   const checked = paymentProfilesList.querySelector(".pay-default:checked");
   if (checked) {
     default_payment_id = checked.closest(".payment-profile-card")?.dataset.id || "";
   }
-  if (!default_payment_id && payment_profiles[0]) default_payment_id = payment_profiles[0].id;
+  if (!payment_profiles.some((p) => p.id === default_payment_id)) {
+    default_payment_id = payment_profiles[0] ? payment_profiles[0].id : "";
+  }
   return { payment_profiles, default_payment_id };
 }
 
@@ -2424,6 +2619,55 @@ function getSplitsForEvent(event) {
   return [...byId.values()];
 }
 
+function isCloudId(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id || ""));
+}
+
+async function deleteCloudRows(kind, ids) {
+  const cloudIds = [...new Set(ids.map(String))].filter(isCloudId);
+  if (!cloudIds.length || !getSession()?.access_token) return;
+  for (const id of cloudIds) {
+    const response = await fetch(`/api/${kind}/${id}`, { method: "DELETE", headers: authHeaders() });
+    if (response.ok || response.status === 404) continue;
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Could not delete.");
+  }
+}
+
+function eventForHistoryEntry(entry) {
+  const events = loadEvents();
+  if (entry.eventId) {
+    const linked = events.find((ev) => ev.id === entry.eventId);
+    if (linked) return linked;
+  }
+  const title = (entry.data?.event_details?.title || "").trim().toLowerCase();
+  const date = normalizeEventDate(entry.data?.event_details?.date);
+  if (!title) return null;
+  return (
+    events.find((ev) => String(ev.title || "").trim().toLowerCase() === title && ev.date === date) || null
+  );
+}
+
+function discardOpenSplit(ids) {
+  const drop = new Set(ids.map(String));
+  if (!drop.has(String(state.lastHistoryId || ""))) return;
+  btnNewSplit.click();
+}
+
+async function deleteHistoryAndCalendar(splitIds, eventIds) {
+  const bills = [...new Set(splitIds.map(String))];
+  const eventsToRemove = [...new Set(eventIds.map(String))];
+  await deleteCloudRows("splits", bills);
+  await deleteCloudRows("events", eventsToRemove);
+  if (bills.length) {
+    saveHistory(loadHistory().filter((h) => !bills.includes(String(h.id))));
+  }
+  if (eventsToRemove.length) {
+    saveEvents(loadEvents().filter((ev) => !eventsToRemove.includes(String(ev.id))));
+  }
+  discardOpenSplit(bills);
+}
+
 function renderCalendar() {
   rebuildCalendarLinks();
   const events = loadEvents().slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -2471,13 +2715,21 @@ function renderCalendar() {
       });
     }
 
-    el.querySelector(".btn-delete-event").addEventListener("click", () => {
-      saveEvents(loadEvents().filter((e) => e.id !== event.id));
-      const history = loadHistory().map((h) => {
-        if (h.eventId === event.id) return { ...h, eventId: null };
-        return h;
-      });
-      saveHistory(history);
+    el.querySelector(".btn-delete-event").addEventListener("click", async () => {
+      const splits = getSplitsForEvent(event);
+      const extra = loadHistory().filter((h) => h.eventId === event.id).map((h) => h.id);
+      const billIds = [...new Set([...splits.map((s) => s.id), ...extra])];
+      const title = event.title || "this event";
+      const message = billIds.length
+        ? `Delete “${title}” from the calendar and History? This cannot be undone.`
+        : `Delete “${title}” from the calendar? This cannot be undone.`;
+      if (!window.confirm(message)) return;
+      try {
+        await deleteHistoryAndCalendar(billIds, [event.id]);
+      } catch (err) {
+        showError(err.message || "Could not delete.");
+        return;
+      }
       renderCalendar();
     });
 
@@ -3111,17 +3363,34 @@ function renderHistory() {
       copyText(buildSummaryText(data));
     });
 
-    el.querySelector(".btn-delete-history").addEventListener("click", () => {
+    el.querySelector(".btn-delete-history").addEventListener("click", async () => {
       const title = data.event_details.title || "this split";
-      if (!window.confirm(`Delete “${title}”? This cannot be undone.`)) return;
-      const updated = loadHistory().filter((h) => h.id !== entry.id);
-      saveHistory(updated);
-      if (entry.eventId) {
-        const events = loadEvents().map((ev) => {
-          if (ev.id !== entry.eventId) return ev;
-          return { ...ev, splitIds: (ev.splitIds || []).filter((id) => id !== entry.id) };
-        });
-        saveEvents(events);
+      const event = eventForHistoryEntry(entry);
+      const siblings = event ? getSplitsForEvent(event).filter((s) => String(s.id) !== String(entry.id)) : [];
+      const message = event
+        ? siblings.length
+          ? `Delete “${title}” from History? The calendar event stays because other bills are still on it.`
+          : `Delete “${title}” from History and the calendar? This cannot be undone.`
+        : `Delete “${title}”? This cannot be undone.`;
+      if (!window.confirm(message)) return;
+      try {
+        if (event && !siblings.length) {
+          await deleteHistoryAndCalendar([entry.id], [event.id]);
+        } else {
+          await deleteHistoryAndCalendar([entry.id], []);
+          if (event) {
+            const events = loadEvents().map((ev) => {
+              if (ev.id !== event.id) return ev;
+              return { ...ev, splitIds: (ev.splitIds || []).filter((id) => String(id) !== String(entry.id)) };
+            });
+            saveEvents(events);
+            const updated = events.find((ev) => ev.id === event.id);
+            if (updated) syncEventToCloud(updated);
+          }
+        }
+      } catch (err) {
+        showError(err.message || "Could not delete.");
+        return;
       }
       renderHistory();
     });

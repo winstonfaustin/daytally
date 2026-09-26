@@ -253,19 +253,61 @@ def auth_profile_update():
 
 @app.route("/api/users/payment-methods", methods=["GET"])
 def users_payment_methods():
-    email = str(request.args.get("email") or "").strip().lower()
+    return jsonify({"error": "Payment details are shared only with accepted friends."}), 403
+
+
+@app.route("/api/friends", methods=["GET"])
+def get_friends():
     try:
-        _require_user()
-        payload = sb.lookup_payment_methods_by_email(email)
-        return jsonify({"success": True, **payload})
+        user = _require_user()
+        return jsonify({"success": True, "friends": sb.list_friends(user["id"])})
     except PermissionError as exc:
         return jsonify({"error": str(exc)}), 401
-    except sb.SupabaseNotConfigured as exc:
-        return jsonify({"error": str(exc)}), 503
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 404
     except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/friends", methods=["POST"])
+def post_friend():
+    body = request.get_json(silent=True) or {}
+    try:
+        user = _require_user()
+        friend = sb.request_friend(user["id"], body.get("email") or "")
+        return jsonify({"success": True, "friend": friend})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/friends/<friend_id>/accept", methods=["POST"])
+def accept_friend(friend_id):
+    try:
+        user = _require_user()
+        sb.accept_friend(user["id"], friend_id)
+        return jsonify({"success": True})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/friends/<friend_id>", methods=["DELETE"])
+def delete_friend(friend_id):
+    try:
+        user = _require_user()
+        sb.remove_friend(user["id"], friend_id)
+        return jsonify({"success": True})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/splits", methods=["GET"])
@@ -300,6 +342,30 @@ def get_events():
     try:
         user = _require_user()
         return jsonify({"success": True, "events": sb.list_events(user["id"])})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/splits/<split_id>", methods=["DELETE"])
+def delete_split(split_id):
+    try:
+        user = _require_user()
+        sb.delete_split(user["id"], split_id)
+        return jsonify({"success": True})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/events/<event_id>", methods=["DELETE"])
+def delete_event(event_id):
+    try:
+        user = _require_user()
+        sb.delete_event(user["id"], event_id)
+        return jsonify({"success": True})
     except PermissionError as exc:
         return jsonify({"error": str(exc)}), 401
     except Exception as exc:
