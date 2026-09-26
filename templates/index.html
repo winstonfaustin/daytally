@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme31">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme33">
 </head>
 <body>
   <div class="page hidden" id="app-shell">
@@ -97,34 +97,39 @@
       <!-- Step 2: Who had what -->
       <section class="card wizard-panel hidden" id="step-voice">
         <h3 class="panel-title">Who had what</h3>
-        <p class="panel-desc">One name and one dish per person. Shared plates go on the last line. You do not type prices.</p>
-        <p class="say-example">Example: Alex had the chicken rice. Sam had the iced tea. We shared the fries.</p>
+        <p class="panel-desc">Choose one. Type each dish, or say it out loud. You do not enter prices.</p>
 
-        <div class="split-form" id="split-form">
-          <div class="edit-field">
-            <label for="split-event">Meal name (optional)</label>
-            <input type="text" id="split-event" maxlength="80" placeholder="Dinner" autocomplete="off">
-          </div>
+        <div class="who-choice" role="group" aria-label="How to name the dishes">
+          <button type="button" class="who-choice-btn active" id="who-choice-type" aria-pressed="true">Type</button>
+          <button type="button" class="who-choice-btn" id="who-choice-speak" aria-pressed="false">Speak</button>
+        </div>
 
-          <div class="who-receipt-frame who-receipt-frame-type hidden">
-            <img class="receipt-preview who-receipt" id="who-receipt-type" alt="Receipt">
-            <div class="who-zoom">
-              <button type="button" data-zoom="out" aria-label="Zoom out">−</button>
-              <button type="button" data-zoom="in" aria-label="Zoom in">+</button>
+        <div id="who-type">
+          <div class="split-form" id="split-form">
+            <div class="edit-field">
+              <label for="split-event">Meal name (optional)</label>
+              <input type="text" id="split-event" maxlength="80" placeholder="Dinner" autocomplete="off">
             </div>
-          </div>
-          <p class="split-form-label">People</p>
-          <div class="split-people" id="split-people"></div>
-          <button type="button" class="btn-text" id="btn-add-person">+ Add person</button>
 
-          <div class="edit-field split-shared-field">
-            <label for="split-shared">Shared plates (optional)</label>
-            <input type="text" id="split-shared" maxlength="120" placeholder="beef, drinks" autocomplete="off">
+            <div class="who-receipt-frame who-receipt-frame-type hidden">
+              <img class="receipt-preview who-receipt" id="who-receipt-type" alt="Receipt">
+              <div class="who-zoom">
+                <button type="button" data-zoom="out" aria-label="Zoom out">−</button>
+                <button type="button" data-zoom="in" aria-label="Zoom in">+</button>
+              </div>
+            </div>
+            <p class="split-form-label">People</p>
+            <div class="split-people" id="split-people"></div>
+            <button type="button" class="btn-text" id="btn-add-person">+ Add person</button>
+
+            <div class="edit-field split-shared-field">
+              <label for="split-shared">Shared plates (optional)</label>
+              <input type="text" id="split-shared" maxlength="120" placeholder="beef, drinks" autocomplete="off">
+            </div>
           </div>
         </div>
 
-        <details class="text-fallback">
-          <summary>Or say it out loud</summary>
+        <div id="who-speak" class="hidden">
           <p class="say-example">Say the name, then the dish, as printed on the receipt. Example: Alex had the chicken rice. Sam had the iced tea. We shared the fries.</p>
           <div class="who-receipt-frame hidden">
             <img class="receipt-preview who-receipt" id="who-receipt" alt="Receipt">
@@ -148,7 +153,7 @@
             <audio controls id="audio-playback"></audio>
             <button type="button" class="btn-text" id="btn-rerecord">Re-record</button>
           </div>
-        </details>
+        </div>
 
         <div class="btn-row">
           <button type="button" class="btn-secondary" id="btn-back-receipt">Back</button>
@@ -571,6 +576,6 @@
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme32"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme33"></script>
 </body>
 </html>

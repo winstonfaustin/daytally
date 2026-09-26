@@ -519,22 +519,32 @@ body {
   line-height: 1.45;
 }
 
-.text-fallback {
-  margin: 1rem 0;
+.who-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin: 0.9rem 0 1rem;
+}
+
+.who-choice-btn {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 0.75rem 1rem;
   background: var(--surface-raised);
-}
-
-.text-fallback summary {
-  cursor: pointer;
-  font-size: 0.875rem;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 0.8rem 0.5rem;
+  font-family: inherit;
+  font-size: 1rem;
   font-weight: 600;
-  color: var(--text-muted);
+  cursor: pointer;
 }
 
-.text-fallback .recorder {
+.who-choice-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#who-speak .recorder {
   margin-top: 0.75rem;
 }
 

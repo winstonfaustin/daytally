@@ -13,6 +13,7 @@ const state = {
   settleFriend: null,
   view: "new",
   friends: [],
+  whoMode: "type",
 };
 
 const THEME_KEY = "daytally_theme";
@@ -73,6 +74,10 @@ const recordWave = document.getElementById("record-wave");
 const audioPreview = document.getElementById("audio-preview");
 const audioPlayback = document.getElementById("audio-playback");
 const btnRerecord = document.getElementById("btn-rerecord");
+const whoType = document.getElementById("who-type");
+const whoSpeak = document.getElementById("who-speak");
+const whoChoiceType = document.getElementById("who-choice-type");
+const whoChoiceSpeak = document.getElementById("who-choice-speak");
 const splitEvent = document.getElementById("split-event");
 const splitPeople = document.getElementById("split-people");
 const splitShared = document.getElementById("split-shared");
@@ -299,14 +304,28 @@ function composeSplitText() {
   return lines.join(" ");
 }
 
+function setWhoMode(mode) {
+  state.whoMode = mode === "speak" ? "speak" : "type";
+  if (whoType) whoType.classList.toggle("hidden", state.whoMode !== "type");
+  if (whoSpeak) whoSpeak.classList.toggle("hidden", state.whoMode !== "speak");
+  if (whoChoiceType) {
+    whoChoiceType.classList.toggle("active", state.whoMode === "type");
+    whoChoiceType.setAttribute("aria-pressed", state.whoMode === "type" ? "true" : "false");
+  }
+  if (whoChoiceSpeak) {
+    whoChoiceSpeak.classList.toggle("active", state.whoMode === "speak");
+    whoChoiceSpeak.setAttribute("aria-pressed", state.whoMode === "speak" ? "true" : "false");
+  }
+  updateProcessButton();
+}
+
 function canProcess() {
-  const hasAudio = !!state.audioBlob;
-  const hasPerson = [...splitPeople.querySelectorAll(".split-person")].some((row) => {
+  if (state.whoMode === "speak") return !!state.audioBlob;
+  return [...splitPeople.querySelectorAll(".split-person")].some((row) => {
     const name = row.querySelector(".split-name").value.trim();
     const item = row.querySelector(".split-item").value.trim();
     return name && item;
   });
-  return hasAudio || hasPerson;
 }
 
 function updateProcessButton() {
@@ -605,6 +624,8 @@ recordBtn.addEventListener("touchcancel", stopRecording, { passive: false });
 btnRerecord.addEventListener("click", resetRecording);
 
 resetSplitForm();
+if (whoChoiceType) whoChoiceType.addEventListener("click", () => setWhoMode("type"));
+if (whoChoiceSpeak) whoChoiceSpeak.addEventListener("click", () => setWhoMode("speak"));
 splitEvent.addEventListener("input", updateProcessButton);
 splitShared.addEventListener("input", updateProcessButton);
 splitPeople.addEventListener("input", updateProcessButton);
@@ -648,7 +669,11 @@ btnProcess.addEventListener("click", async () => {
     return;
   }
   if (!canProcess()) {
-    showError("Add at least one person and what they had, or record a voice note.");
+    showError(
+      state.whoMode === "speak"
+        ? "Record who had what before calculating."
+        : "Add at least one person and what they had."
+    );
     return;
   }
 
@@ -659,13 +684,11 @@ btnProcess.addEventListener("click", async () => {
   const formData = new FormData();
   formData.append("receipt", await shrinkReceipt(state.receiptFile));
 
-  if (state.audioBlob) {
-    formData.append("audio", state.audioBlob, "voice-note.webm");
-  }
-
-  const splitText = composeSplitText();
-  if (splitText) {
-    formData.append("voice_text", splitText);
+  if (state.whoMode === "speak") {
+    if (state.audioBlob) formData.append("audio", state.audioBlob, "voice-note.webm");
+  } else {
+    const splitText = composeSplitText();
+    if (splitText) formData.append("voice_text", splitText);
   }
 
   try {
@@ -1822,6 +1845,7 @@ function resetWizard() {
   document.getElementById("continue-hint")?.classList.remove("hidden");
   resetRecording();
   resetSplitForm();
+  setWhoMode("type");
   hideError();
   setWizardStep(1);
   showStudyCard(false);
