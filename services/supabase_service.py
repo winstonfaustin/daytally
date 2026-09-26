@@ -305,9 +305,10 @@ def _auth_and_prefs(user_id: str) -> tuple[Any, dict[str, Any], str]:
     return auth_user, prefs, display_name
 
 
-def _write_user_prefs(user_id: str, display_name: str, prefs: dict[str, Any]) -> None:
+def _write_user_prefs(user_id: str, display_name: str, prefs: dict[str, Any], auth_user: Any = None) -> None:
     admin = get_admin_client()
-    auth_user = admin.auth.admin.get_user_by_id(user_id).user
+    if auth_user is None:
+        auth_user = admin.auth.admin.get_user_by_id(user_id).user
     meta = getattr(auth_user, "user_metadata", None) or {}
     if not isinstance(meta, dict):
         meta = {}
@@ -386,11 +387,18 @@ def _find_user_by_email(email: str) -> tuple[str, str, str] | None:
     return None
 
 
-def _save_friends(user_id: str, friends: list[dict[str, str]]) -> None:
-    _auth_user, prefs, display_name = _auth_and_prefs(user_id)
+def _save_friends(
+    user_id: str,
+    friends: list[dict[str, str]],
+    known: tuple[Any, dict[str, Any], str] | None = None,
+) -> None:
+    if known:
+        auth_user, prefs, display_name = known
+    else:
+        auth_user, prefs, display_name = _auth_and_prefs(user_id)
     prefs = dict(prefs)
     prefs["friends"] = _normalize_friends(friends)
-    _write_user_prefs(user_id, display_name, prefs)
+    _write_user_prefs(user_id, display_name, prefs, auth_user=auth_user)
 
 
 def _friend_public(row: dict[str, str], include_payments: bool) -> dict[str, Any]:
@@ -462,8 +470,8 @@ def request_friend(user_id: str, email: str) -> dict[str, Any]:
         for row in other_friends:
             if row["id"] == friend_id or row["user_id"] == user_id:
                 row["status"] = "accepted"
-        _save_friends(user_id, me_friends)
-        _save_friends(other_id, other_friends)
+        _save_friends(user_id, me_friends, known=(me_auth, me_prefs, me_name))
+        _save_friends(other_id, other_friends, known=(_other_auth, other_prefs, _other_display))
         saved = next(row for row in me_friends if row["user_id"] == other_id)
         return _friend_public(saved, include_payments=False)
 
@@ -488,8 +496,8 @@ def request_friend(user_id: str, email: str) -> dict[str, Any]:
             "role": "incoming",
         }
     )
-    _save_friends(user_id, me_friends)
-    _save_friends(other_id, other_friends)
+    _save_friends(user_id, me_friends, known=(me_auth, me_prefs, me_name))
+    _save_friends(other_id, other_friends, known=(_other_auth, other_prefs, _other_display))
     return _friend_public(me_friends[-1], include_payments=False)
 
 
@@ -506,7 +514,7 @@ def accept_friend(user_id: str, friend_id: str) -> None:
     for item in friends:
         if item["id"] == friend_id:
             item["status"] = "accepted"
-    _save_friends(user_id, friends)
+    _save_friends(user_id, friends, known=(_auth_user, prefs, _display_name))
     _other_auth, other_prefs, _other_name = _auth_and_prefs(row["user_id"])
     other_friends = _normalize_friends(other_prefs.get("friends"))
     found = False
@@ -528,7 +536,7 @@ def accept_friend(user_id: str, friend_id: str) -> None:
                 "role": "outgoing",
             }
         )
-    _save_friends(row["user_id"], other_friends)
+    _save_friends(row["user_id"], other_friends, known=(_other_auth, other_prefs, _other_name))
 
 
 def remove_friend(user_id: str, friend_id: str) -> None:
@@ -537,7 +545,11 @@ def remove_friend(user_id: str, friend_id: str) -> None:
     row = next((item for item in friends if item["id"] == friend_id), None)
     if not row:
         raise ValueError("That friend is not on your account.")
-    _save_friends(user_id, [item for item in friends if item["id"] != friend_id])
+    _save_friends(
+        user_id,
+        [item for item in friends if item["id"] != friend_id],
+        known=(_auth_user, prefs, _display_name),
+    )
     try:
         _other_auth, other_prefs, _other_name = _auth_and_prefs(row["user_id"])
     except Exception:
@@ -547,7 +559,7 @@ def remove_friend(user_id: str, friend_id: str) -> None:
         for item in _normalize_friends(other_prefs.get("friends"))
         if item["id"] != friend_id and item["user_id"] != user_id
     ]
-    _save_friends(row["user_id"], other_friends)
+    _save_friends(row["user_id"], other_friends, known=(_other_auth, other_prefs, _other_name))
 
 
 def update_profile(user_id: str, updates: dict[str, Any]) -> dict[str, Any]:

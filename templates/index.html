@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme33">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme39">
 </head>
 <body>
   <div class="page hidden" id="app-shell">
@@ -97,7 +97,7 @@
       <!-- Step 2: Who had what -->
       <section class="card wizard-panel hidden" id="step-voice">
         <h3 class="panel-title">Who had what</h3>
-        <p class="panel-desc">Choose one. Type each dish, or say it out loud. You do not enter prices.</p>
+        <p class="panel-desc">Choose Type or Speak. A person can have more than one dish. Put them in the same box. You do not enter prices.</p>
 
         <div class="who-choice" role="group" aria-label="How to name the dishes">
           <button type="button" class="who-choice-btn active" id="who-choice-type" aria-pressed="true">Type</button>
@@ -208,6 +208,7 @@
             <label for="edit-gst-percent">Tax, GST (%)</label>
             <input type="number" id="edit-gst-percent" step="0.01" min="0">
             <span class="field-amount" id="edit-tax-amount"></span>
+            <p class="field-hint hidden" id="gst-base-hint"></p>
           </div>
           <div class="edit-field">
             <label for="edit-svc-percent">Service charge (%)</label>
@@ -515,7 +516,7 @@
         </button>
       </div>
       <h2>Welcome to DayTally</h2>
-      <p class="panel-desc">Sign in with Google or email so your bills sync to the cloud. Use the same display name as on your receipts.</p>
+      <p class="panel-desc">Sign in with Google or email so your bills sync to the cloud.</p>
 
       <button type="button" class="btn-secondary auth-google-btn" id="btn-google">Continue with Google</button>
       <p class="auth-divider"><span>or</span></p>
@@ -550,21 +551,22 @@
           <label for="register-pass">Password</label>
           <input type="password" id="register-pass" maxlength="64" required autocomplete="new-password" minlength="6">
         </div>
+        <p class="field-hint">Use the same display name as on the receipt. That is the name the chatbot calls you.</p>
         <button type="submit" class="btn-primary">Create profile</button>
       </form>
 
       <p class="auth-error hidden" id="auth-error" role="alert"></p>
-      <p class="field-hint">Use the same display name as on the receipt. That is the name the chatbot calls you.</p>
     </div>
   </div>
 
   <div class="notes-overlay hidden" id="notes-overlay" role="dialog" aria-modal="true" aria-labelledby="notes-title">
     <div class="notes-card card">
+      <div class="notes-scroll">
       <h2 id="notes-title">What DayTally does</h2>
       <p class="panel-desc">Split a meal bill from a receipt photo. The app reads the prices. You check the names, then confirm.</p>
       <ol class="notes-list">
         <li><strong>Receipt.</strong> Add a photo. DayTally reads the dishes, GST, and service charge.</li>
-        <li><strong>Who had what.</strong> Type each person and their dish, or say it with the microphone.</li>
+        <li><strong>Who had what.</strong> Type each person and the dishes they had, or say them. More than one dish can go in the same box.</li>
         <li><strong>Review.</strong> Fix names, choose who paid first, and add PayNow, bank, or e-money so friends know how to repay.</li>
         <li><strong>Done.</strong> Each card shows one share. Press Mark as paid back when that person has sent the money. Copy or share the summary.</li>
         <li><strong>History and Calendar.</strong> Past splits stay on this device. A confirmed split is linked to an event.</li>
@@ -572,10 +574,11 @@
         <li><strong>Light and dark.</strong> Use the sun or moon beside Profile.</li>
         <li><strong>Feedback.</strong> After a split, one short form per person. It does not change the bill.</li>
       </ol>
+      </div>
       <button type="button" class="btn-primary" id="btn-notes-close">Got it</button>
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme33"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme39"></script>
 </body>
 </html>

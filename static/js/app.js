@@ -7,6 +7,7 @@ const state = {
   draftFlags: [],
   confirmedData: null,
   gstPercent: 0,
+  gstBase: "food",
   svcPercent: 0,
   selectedPaymentId: "",
   settleProfiles: [],
@@ -17,6 +18,7 @@ const state = {
 };
 
 const THEME_KEY = "daytally_theme";
+const NOTES_SEEN_KEY = "daytally_notes_seen";
 const HISTORY_KEY = "daytally_history";
 const EVENTS_KEY = "daytally_events";
 const SESSION_KEY = "daytally_session_v2";
@@ -178,6 +180,20 @@ function isIdr(currency) {
   return String(currency || "").toUpperCase() === "IDR";
 }
 
+function matchingWholeRate(base, tax, currency) {
+  if (!(base > 0)) return null;
+  const raw = (Number(tax) / base) * 100;
+  const seen = new Set();
+  for (const rate of [Math.floor(raw), Math.round(raw), Math.ceil(raw)]) {
+    if (seen.has(rate) || rate < 0 || rate > 30) continue;
+    seen.add(rate);
+    if (Math.abs(roundMoney(base * (rate / 100), currency) - roundMoney(tax, currency)) < 0.001) {
+      return rate;
+    }
+  }
+  return null;
+}
+
 function round2(n) {
   return Math.round(Number(n) * 100) / 100;
 }
@@ -254,7 +270,7 @@ function addPersonRow(name = "", item = "") {
   const itemInput = document.createElement("input");
   itemInput.type = "text";
   itemInput.className = "split-item";
-  itemInput.placeholder = "What they had";
+  itemInput.placeholder = "Dishes they had";
   itemInput.autocomplete = "off";
   itemInput.maxLength = 80;
   itemInput.value = item;
@@ -770,9 +786,21 @@ function itemsSubtotalFromParticipants(data) {
 function syncPercentFromAmounts(data) {
   const subtotal = itemsSubtotalFromParticipants(data);
   const summary = data.receipt_summary;
+  const tax = Number(summary.tax) || 0;
+  const service = Number(summary.tip) || 0;
   if (subtotal > 0) {
-    state.gstPercent = round2((Number(summary.tax) / subtotal) * 100);
-    state.svcPercent = round2((Number(summary.tip) / subtotal) * 100);
+    const currency = data.event_details?.currency;
+    const withService = subtotal + service;
+    const foodRate = matchingWholeRate(subtotal, tax, currency);
+    const bothRate = matchingWholeRate(withService, tax, currency);
+    if (bothRate != null && foodRate == null) {
+      state.gstPercent = bothRate;
+      state.gstBase = "food-and-service";
+    } else {
+      state.gstPercent = foodRate != null ? foodRate : round2((tax / subtotal) * 100);
+      state.gstBase = "food";
+    }
+    state.svcPercent = round2((service / subtotal) * 100);
   }
 }
 
@@ -781,8 +809,9 @@ function applyPercentToAmounts(data) {
   const summary = data.receipt_summary;
   const currency = data.event_details?.currency;
   summary.subtotal = subtotal;
-  summary.tax = roundMoney(subtotal * (state.gstPercent / 100), currency);
   summary.tip = roundMoney(subtotal * (state.svcPercent / 100), currency);
+  const gstBase = state.gstBase === "food-and-service" ? subtotal + summary.tip : subtotal;
+  summary.tax = roundMoney(gstBase * (state.gstPercent / 100), currency);
   summary.grand_total = roundMoney(subtotal + summary.tax + summary.tip, currency);
 }
 
@@ -865,6 +894,14 @@ function updateReviewSummaryFields(data) {
   editSubtotal.value = formatMoney(s.subtotal, c);
   editGstPercent.value = state.gstPercent;
   editSvcPercent.value = state.svcPercent;
+  const gstHint = document.getElementById("gst-base-hint");
+  if (gstHint) {
+    const onService = state.gstBase === "food-and-service";
+    gstHint.textContent = onService
+      ? "This GST is a percent of the food plus the service charge."
+      : "";
+    gstHint.classList.toggle("hidden", !onService);
+  }
   editTaxAmount.textContent = `= ${formatMoney(s.tax, c)}`;
   editTipAmount.textContent = `= ${formatMoney(s.tip, c)}`;
   editGrandTotal.value = formatMoney(s.grand_total, c);
@@ -879,7 +916,11 @@ function renderReview(data, { skipTaxRecalc = false, keepPercent = false } = {})
   }
 
   editTitle.value = data.event_details.title;
-  editDate.value = data.event_details.date;
+  if (document.activeElement !== editDate) {
+    const shownDate = formatDisplayDate(data.event_details.date);
+    editDate.value = shownDate;
+    if (shownDate) data.event_details.date = shownDate;
+  }
   editCurrency.value = data.event_details.currency;
   updateReviewSummaryFields(data);
   fillPayerSelect(data);
@@ -965,10 +1006,11 @@ function syncSettlePayUI() {
     if (settleFriendSelect) {
       settleFriendSelect.innerHTML = accepted.length
         ? accepted
-            .map(
-              (friend) =>
-                `<option value="${escapeHtml(friend.id)}">${escapeHtml(friend.name || friend.email)}</option>`
-            )
+            .map((friend) => {
+              const label = friend.name || friend.email;
+              const missing = friendHasPayment(friend) ? "" : " (no payment method)";
+              return `<option value="${escapeHtml(friend.id)}">${escapeHtml(label + missing)}</option>`;
+            })
             .join("")
         : '<option value="">No accepted friends yet</option>';
       if (previousFriend && accepted.some((friend) => friend.id === previousFriend)) {
@@ -1004,7 +1046,7 @@ function syncSettlePayUI() {
       if (settleFriendStatus) {
         settleFriendStatus.textContent = usable
           ? ""
-          : `${chosen.name} has not saved a phone or bank number yet.`;
+          : `${chosen.name || "This friend"} has no saved payment method. Choose Use my saved details or Type the details.`;
       }
     }
   } else if (source === "manual") {
@@ -1056,18 +1098,29 @@ function collectSettlePayment() {
   };
 }
 
-function friendRow(friend, actions) {
+function friendHasPayment(friend) {
+  return (friend?.payment_profiles || []).some(paymentHasDestination);
+}
+
+function friendRow(friend, actions, options) {
   const row = document.createElement("div");
-  row.className = "friend-row";
+  row.className = "friend-row" + (options?.kind ? ` ${options.kind}` : "");
   const text = document.createElement("div");
+  text.className = "friend-copy";
   const title = document.createElement("strong");
   title.textContent = friend.name || friend.email;
   const detail = document.createElement("p");
   detail.className = "field-hint";
   detail.textContent = friend.email || "";
   text.append(title, detail);
+  if (options?.status) {
+    const status = document.createElement("p");
+    status.className = "friend-status-line";
+    status.textContent = options.status;
+    text.append(status);
+  }
   const buttons = document.createElement("div");
-  buttons.className = "btn-row";
+  buttons.className = "friend-actions";
   actions.forEach((action) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1108,22 +1161,34 @@ function syncFriendPolling() {
   }
 }
 
+let friendLoadGen = 0;
+
 async function loadFriends(options) {
   const quiet = !!(options && options.quiet);
   if (!getSession()?.access_token) return;
+  const gen = ++friendLoadGen;
   try {
     const response = await fetch("/api/friends", { headers: authHeaders() });
     const payload = await response.json();
+    if (gen !== friendLoadGen) return;
     if (!response.ok) throw new Error(payload.error || "Could not load friends.");
     const incoming = Array.isArray(payload.friends) ? payload.friends : [];
     const same = JSON.stringify(incoming) === JSON.stringify(state.friends);
     state.friends = incoming;
     if (quiet && same) return;
   } catch (err) {
+    if (gen !== friendLoadGen) return;
     if (quiet) return;
     state.friends = [];
     if (friendStatus) friendStatus.textContent = err.message || "Could not load friends.";
   }
+  renderFriends();
+  if (settleSource?.value === "friend") syncSettlePayUI();
+}
+
+function showFriends(next) {
+  friendLoadGen += 1;
+  state.friends = next;
   renderFriends();
   if (settleSource?.value === "friend") syncSettlePayUI();
 }
@@ -1135,64 +1200,132 @@ function renderFriends() {
   const incoming = state.friends.filter((friend) => friend.role === "incoming" && friend.status === "pending");
   const outgoing = state.friends.filter((friend) => friend.role === "outgoing" && friend.status === "pending");
   const accepted = state.friends.filter((friend) => friend.status === "accepted");
+  if (incoming.length) {
+    const heading = document.createElement("p");
+    heading.className = "friend-group-label";
+    heading.textContent = "Incoming requests";
+    friendRequests.appendChild(heading);
+  }
   incoming.forEach((friend) => {
     friendRequests.appendChild(
-      friendRow(friend, [
-        { label: "Accept", onClick: () => respondToFriend(friend.id, "accept") },
-        { label: "Decline", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
-      ])
+      friendRow(
+        friend,
+        [
+          { label: "Accept", onClick: () => respondToFriend(friend.id, "accept") },
+          { label: "Decline", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
+        ],
+        { kind: "is-request" }
+      )
     );
   });
+  if (accepted.length) {
+    const heading = document.createElement("p");
+    heading.className = "friend-group-label";
+    heading.textContent = "Friends";
+    friendList.appendChild(heading);
+  }
   accepted.forEach((friend) => {
     friendList.appendChild(
-      friendRow(friend, [
-        { label: "Remove", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
-      ])
+      friendRow(
+        friend,
+        [{ label: "Remove", danger: true, onClick: () => respondToFriend(friend.id, "delete") }],
+        {
+          kind: "is-accepted",
+          status: friendHasPayment(friend) ? "" : "No payment method saved",
+        }
+      )
     );
   });
+  if (outgoing.length) {
+    const heading = document.createElement("p");
+    heading.className = "friend-group-label";
+    heading.textContent = "Requested";
+    friendList.appendChild(heading);
+  }
   outgoing.forEach((friend) => {
-    const row = friendRow(friend, [
-      { label: "Cancel", danger: true, onClick: () => respondToFriend(friend.id, "delete") },
-    ]);
-    const waiting = document.createElement("p");
-    waiting.className = "field-hint";
-    waiting.textContent = "Waiting for them to accept.";
-    row.querySelector("div").appendChild(waiting);
-    friendList.appendChild(row);
+    friendList.appendChild(
+      friendRow(
+        friend,
+        [{ label: "Cancel", danger: true, onClick: () => respondToFriend(friend.id, "delete") }],
+        { kind: "is-waiting", status: "Waiting for them to accept" }
+      )
+    );
   });
 }
 
+const friendBusy = new Set();
+
 async function respondToFriend(id, action) {
+  if (friendBusy.has(id)) return;
+  friendBusy.add(id);
+  const previous = state.friends.map((row) => ({ ...row }));
+  if (friendStatus) friendStatus.textContent = "";
+  if (action === "delete") {
+    showFriends(state.friends.filter((row) => row.id !== id));
+  } else {
+    showFriends(
+      state.friends.map((row) => (row.id === id ? { ...row, status: "accepted" } : row))
+    );
+  }
   const path = action === "accept" ? `/api/friends/${id}/accept` : `/api/friends/${id}`;
   const method = action === "accept" ? "POST" : "DELETE";
-  if (friendStatus) friendStatus.textContent = "";
   try {
     const response = await fetch(path, { method, headers: authHeaders() });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not update that friend.");
-    await loadFriends();
+    loadFriends({ quiet: true });
   } catch (err) {
+    showFriends(previous);
     if (friendStatus) friendStatus.textContent = err.message || "Could not update that friend.";
+  } finally {
+    friendBusy.delete(id);
   }
 }
 
 async function addFriend(email) {
-  if (friendStatus) friendStatus.textContent = "Sending request…";
-  const response = await fetch("/api/friends", {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ email }),
-  });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "Could not add that friend.");
+  const pendingId = `pending_${Date.now()}`;
+  const previous = state.friends.map((row) => ({ ...row }));
+  showFriends([
+    {
+      id: pendingId,
+      email,
+      name: email,
+      status: "pending",
+      role: "outgoing",
+    },
+    ...state.friends.filter((row) => String(row.email || "").toLowerCase() !== email),
+  ]);
   if (friendEmail) friendEmail.value = "";
-  if (friendStatus) {
-    friendStatus.textContent =
-      payload.friend?.status === "accepted"
-        ? "You are now friends."
-        : "Request sent. Their number stays hidden until they accept.";
+  if (friendStatus) friendStatus.textContent = "Sending request…";
+  const submit = friendAddForm?.querySelector("button[type=submit]");
+  if (submit) submit.disabled = true;
+  try {
+    const response = await fetch("/api/friends", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ email }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Could not add that friend.");
+    const friend = payload.friend;
+    showFriends([
+      friend,
+      ...state.friends.filter((row) => row.id !== pendingId && row.id !== friend?.id),
+    ].filter(Boolean));
+    if (friendStatus) {
+      friendStatus.textContent =
+        friend?.status === "accepted"
+          ? "You are now friends."
+          : "Request sent. Their number stays hidden until they accept.";
+    }
+    loadFriends({ quiet: true });
+  } catch (err) {
+    showFriends(previous);
+    if (friendEmail) friendEmail.value = email;
+    throw err;
+  } finally {
+    if (submit) submit.disabled = false;
   }
-  await loadFriends();
 }
 
 if (settleSource) {
@@ -1228,11 +1361,16 @@ function buildEditParticipantCard(data, person, pIdx) {
   card.className = "edit-participant-card";
   const currency = data.event_details.currency;
 
+  person.items_consumed.forEach((item) => {
+    const shown = displayItemName(item.item_name);
+    if (shown) item.item_name = shown;
+  });
+
   const itemsHtml = person.items_consumed
     .map(
       (item, iIdx) => `
       <div class="edit-item-row" data-p="${pIdx}" data-i="${iIdx}">
-        <input type="text" class="edit-item-name" value="${escapeHtml(item.item_name)}" data-field="name">
+        <input type="text" class="edit-item-name" value="${escapeHtml(displayItemName(item.item_name))}" data-field="name">
         <input type="number" class="edit-item-cost" value="${item.item_cost}" step="${isIdr(currency) ? "1" : "0.01"}" min="0" data-field="cost">
         <button type="button" class="btn-icon btn-delete-item" title="Remove item">✕</button>
       </div>`
@@ -1332,8 +1470,8 @@ function displayItemName(name) {
   text = text.replace(/^\d{3}\s+(?=[A-Za-z])/, "");
   if (!text) text = original;
   text = text.replace(/--+/g, "-");
+  text = text.replace(/\b(with|and)(?=[A-Za-z])/gi, "$1 ");
   text = text.replace(/([a-z])([A-Z])/g, "$1 $2");
-  text = text.replace(/\b(with|and)(?=[a-z])/gi, "$1 ");
   text = text.replace(/([A-Za-z])([\u4e00-\u9fff])/g, "$1 $2");
   text = text.replace(/\s+/g, " ").trim();
   return text || original;
@@ -1451,13 +1589,24 @@ function renderResults(data) {
   syncSharePaymentSelect(data);
 
   document.getElementById("event-title").textContent = event.title;
-  document.getElementById("event-date").textContent = event.date;
+  document.getElementById("event-date").textContent = formatDisplayDate(event.date) || event.date;
   document.getElementById("event-currency").textContent = currency;
   document.getElementById("grand-total").textContent = formatMoney(summary.grand_total, currency);
   document.getElementById("subtotal").textContent = formatMoney(summary.subtotal, currency);
   const gstPct = summary.subtotal > 0 ? round2((summary.tax / summary.subtotal) * 100) : 0;
   const svcPct = summary.subtotal > 0 ? round2((summary.tip / summary.subtotal) * 100) : 0;
-  document.getElementById("tax-label").textContent = `GST (${gstPct}%)`;
+  const gstCurrency = data.event_details?.currency;
+  const foodRate = matchingWholeRate(summary.subtotal, summary.tax, gstCurrency);
+  const bothRate = matchingWholeRate(
+    Number(summary.subtotal) + Number(summary.tip || 0),
+    summary.tax,
+    gstCurrency
+  );
+  const gstOnBoth = bothRate != null && foodRate == null;
+  const gstShown = gstOnBoth ? bothRate : foodRate != null ? foodRate : gstPct;
+  document.getElementById("tax-label").textContent = gstOnBoth
+    ? `GST (${gstShown}% of food and service)`
+    : `GST (${gstShown}%)`;
   document.getElementById("tip-label").textContent = `Service (${svcPct}%)`;
   document.getElementById("tax").textContent = formatMoney(summary.tax, currency);
   document.getElementById("tip").textContent = formatMoney(summary.tip, currency);
@@ -1961,19 +2110,24 @@ function showNotes(on) {
   document.getElementById("notes-overlay")?.classList.toggle("hidden", !on);
 }
 
+function dismissNotes() {
+  showNotes(false);
+  localStorage.setItem(NOTES_SEEN_KEY, "1");
+}
+
 async function showApp(options) {
   authScreen.classList.add("hidden");
   appShell.classList.remove("hidden");
+  if (options && options.notes && !localStorage.getItem(NOTES_SEEN_KEY)) showNotes(true);
   await refreshProfileFromCloud();
   const user = getCurrentUser();
   if (userChipName) userChipName.textContent = user ? user.name || user.email : "Guest";
   await refreshCloudData();
-  if (options && options.notes) showNotes(true);
 }
 
-document.getElementById("btn-notes-close")?.addEventListener("click", () => showNotes(false));
+document.getElementById("btn-notes-close")?.addEventListener("click", () => dismissNotes());
 document.getElementById("notes-overlay")?.addEventListener("click", (event) => {
-  if (event.target.id === "notes-overlay") showNotes(false);
+  if (event.target.id === "notes-overlay") dismissNotes();
 });
 
 function showAuth() {
@@ -2044,9 +2198,16 @@ function emptyPaymentProfile() {
 
 function renderPaymentProfileEditors(profiles, defaultId) {
   if (!paymentProfilesList) return;
-  const list = profiles.length ? profiles : [emptyPaymentProfile()];
-  const def = defaultId || list[0]?.id || "";
+  const list = (profiles || []).filter(paymentHasDestination);
   paymentProfilesList.innerHTML = "";
+  if (!list.length) {
+    const empty = document.createElement("p");
+    empty.className = "field-hint pay-empty";
+    empty.textContent = "No payment method saved.";
+    paymentProfilesList.appendChild(empty);
+    return;
+  }
+  const def = defaultId || list[0]?.id || "";
   list.forEach((p) => {
     // Map old methods to the simplified set when editing.
     if (p.method && !PAYMENT_METHODS.includes(p.method)) {
@@ -2114,7 +2275,7 @@ function buildPaymentProfileCard(profile, isDefault) {
   card.querySelector(".btn-remove-pay").addEventListener("click", () => {
     const cards = paymentProfilesList.querySelectorAll(".payment-profile-card");
     if (cards.length <= 1) {
-      renderPaymentProfileEditors([emptyPaymentProfile()], "");
+      renderPaymentProfileEditors([], "");
       return;
     }
     const wasDefault = card.querySelector(".pay-default")?.checked;
@@ -2165,7 +2326,9 @@ if (btnAddPayment) {
       showToast("Max 8 payment methods.");
       return;
     }
-    paymentProfilesList.appendChild(buildPaymentProfileCard(emptyPaymentProfile(), false));
+    paymentProfilesList.querySelector(".pay-empty")?.remove();
+    const isFirst = paymentProfilesList.querySelectorAll(".payment-profile-card").length === 0;
+    paymentProfilesList.appendChild(buildPaymentProfileCard(emptyPaymentProfile(), isFirst));
   });
 }
 
@@ -2472,8 +2635,28 @@ function rebuildCalendarLinks() {
     }
   });
 
+  const dateFixed = [];
+  events.forEach((event) => {
+    const linked = history.filter(
+      (h) => h.eventId === event.id || (event.splitIds || []).includes(h.id)
+    );
+    const dates = [
+      ...new Set(
+        linked
+          .map((h) => normalizeEventDate(h.data?.event_details?.date))
+          .filter(Boolean)
+      ),
+    ];
+    if (dates.length === 1 && event.date !== dates[0]) {
+      event.date = dates[0];
+      changedE = true;
+      dateFixed.push(event);
+    }
+  });
+
   if (changedH) saveHistory(history);
   if (changedE) saveEvents(events);
+  dateFixed.forEach((event) => syncEventToCloud(event));
 }
 
 function saveToHistory(data) {
@@ -2575,13 +2758,51 @@ function saveEvents(events) {
   localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
 }
 
+const DATE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function isoFromParts(year, month, day) {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 function normalizeEventDate(raw) {
   const text = String(raw || "").trim();
-  if (!text) return new Date().toISOString().slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  if (!text) {
+    const now = new Date();
+    return isoFromParts(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  }
+  let match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) return isoFromParts(Number(match[1]), Number(match[2]), Number(match[3]));
+  match = text.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/);
+  if (match) {
+    const iso = isoFromParts(Number(match[3]), Number(match[2]), Number(match[1]));
+    if (iso) return iso;
+  }
+  match = text.match(/^(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{4})$/);
+  if (match) {
+    const month = DATE_MONTHS.findIndex(
+      (name) => name.toLowerCase() === match[2].slice(0, 3).toLowerCase()
+    );
+    if (month >= 0) {
+      const iso = isoFromParts(Number(match[3]), month + 1, Number(match[1]));
+      if (iso) return iso;
+    }
+  }
   const parsed = Date.parse(text);
-  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  if (!Number.isNaN(parsed)) {
+    const date = new Date(parsed);
+    return isoFromParts(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  }
   return text;
+}
+
+function formatDisplayDate(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  const iso = normalizeEventDate(text);
+  const match = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return text;
+  return `${Number(match[3])} ${DATE_MONTHS[Number(match[2]) - 1]} ${match[1]}`;
 }
 
 function linkSplitToCalendar(historyEntry) {
@@ -2703,11 +2924,24 @@ function renderCalendar() {
     const el = document.createElement("div");
     el.className = "event-item";
 
-    const splitsHtml = splits.length
-      ? splits
-          .map((split) => {
-            const c = split.data.event_details.currency;
-            return `<li><strong>${escapeHtml(split.data.event_details.title)}</strong> · ${formatMoney(split.data.receipt_summary.grand_total, c)}</li>`;
+    const billGroups = [];
+    const billsByKey = new Map();
+    splits.forEach((split) => {
+      const key = billFingerprint(split);
+      let group = billsByKey.get(key);
+      if (!group) {
+        group = { split, count: 0 };
+        billsByKey.set(key, group);
+        billGroups.push(group);
+      }
+      group.count += 1;
+    });
+    const splitsHtml = billGroups.length
+      ? billGroups
+          .map((group) => {
+            const c = group.split.data.event_details.currency;
+            const extra = group.count > 1 ? ` · saved ${group.count} times` : "";
+            return `<li class="event-split-line"><span><strong>${escapeHtml(group.split.data.event_details.title)}</strong> · ${formatMoney(group.split.data.receipt_summary.grand_total, c)}${extra}</span><button type="button" class="btn-text btn-view-event-split" data-split-id="${escapeHtml(String(group.split.id))}">View bill</button></li>`;
           })
           .join("")
       : "<li class=\"muted\">No bill linked yet</li>";
@@ -2715,29 +2949,29 @@ function renderCalendar() {
     el.innerHTML = `
       <div class="event-item-main">
         <strong>${escapeHtml(event.title)}</strong>
-        <span>${escapeHtml(event.date)}</span>
+        <span>${escapeHtml(formatDisplayDate(event.date) || event.date)}</span>
         ${event.notes ? `<span class="event-notes">${escapeHtml(event.notes)}</span>` : ""}
         <ul class="event-splits">${splitsHtml}</ul>
       </div>
       <div class="history-item-actions">
-        ${splits[0] ? '<button type="button" class="btn-text btn-view-event-split">View bill</button>' : ""}
         <button type="button" class="btn-text btn-delete-event danger">Delete</button>
       </div>
     `;
 
-    const viewBtn = el.querySelector(".btn-view-event-split");
-    if (viewBtn && splits[0]) {
+    el.querySelectorAll(".btn-view-event-split").forEach((viewBtn) => {
       viewBtn.addEventListener("click", () => {
-        state.confirmedData = deepClone(splits[0].data);
-        state.lastHistoryId = splits[0].id;
+        const split = splits.find((item) => String(item.id) === viewBtn.dataset.splitId);
+        if (!split) return;
+        state.confirmedData = deepClone(split.data);
+        state.lastHistoryId = split.id;
         renderResults(state.confirmedData);
         if (calendarBindStatus) {
-          calendarBindStatus.textContent = `Linked to calendar event “${event.title}” (${event.date}).`;
+          calendarBindStatus.textContent = `Linked to calendar event “${event.title}” (${formatDisplayDate(event.date) || event.date}).`;
         }
         switchView("new");
         setWizardStep(4);
       });
-    }
+    });
 
     el.querySelector(".btn-delete-event").addEventListener("click", async () => {
       const splits = getSplitsForEvent(event);
@@ -2877,7 +3111,7 @@ function answerChat(question, expanded) {
       .slice(0, 8)
       .map((e) => {
         const n = getSplitsForEvent(e).length;
-        return `• ${e.title} (${e.date}): ${n} linked bill${n === 1 ? "" : "s"}`;
+        return `• ${e.title} (${formatDisplayDate(e.date) || e.date}): ${n} linked bill${n === 1 ? "" : "s"}`;
       })
       .join("\n");
   }
@@ -3136,6 +3370,14 @@ function answerChat(question, expanded) {
             .join(", ");
           return `You (${me}) were marked as who paid first on ${asPayer.length} bill${asPayer.length === 1 ? "" : "s"}, so you do not owe anyone on ${asPayer.length === 1 ? "that bill" : "those bills"} (for example ${samples}). If someone else paid, set “Who paid first” to them on the Review step before confirming. The chatbot cannot change an already saved payer.`;
         }
+        const names = [
+          ...new Set(
+            history.flatMap((h) => (h.data.participants || []).map((p) => String(p.name || "").trim()).filter(Boolean))
+          ),
+        ];
+        if (names.length) {
+          return `Your profile name is ${me}. None of the saved bills use that name, so there is no share to add up. The bills use ${names.join(", ")}. Under Profile, set Display name to the spelling on the bill if one of those people is you.`;
+        }
         return `I found no open shares for ${me}. You may not be listed as a participant on saved bills, or payer was not set. Check History and your display name under Profile.`;
       }
       const byPayee = {};
@@ -3309,10 +3551,39 @@ chatChips.addEventListener("click", (e) => {
   appendChatBubble("bot", answerChat(question));
 });
 
+function billFingerprint(entry) {
+  let data = entry.data;
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return String(entry.id);
+    }
+  }
+  if (!data?.event_details) return String(entry.id);
+  const people = (data.participants || [])
+    .map((p) => [
+      String(p.name || "").trim().toLowerCase(),
+      Number(p.total_owed || 0).toFixed(2),
+      p.repaid ? "1" : "0",
+    ].join(":"))
+    .sort()
+    .join("|");
+  return [
+    String(data.event_details.title || "").trim().toLowerCase(),
+    normalizeEventDate(data.event_details.date),
+    Number(data.receipt_summary?.grand_total || 0).toFixed(2),
+    String(data.paid_by || "").trim().toLowerCase(),
+    people,
+  ].join("::");
+}
+
 function renderHistory() {
   const history = loadHistory();
   historyList.innerHTML = "";
   let shown = 0;
+  const groups = [];
+  const byKey = new Map();
 
   history.forEach((entry) => {
     let data = entry.data;
@@ -3324,6 +3595,20 @@ function renderHistory() {
       }
     }
     if (!data?.event_details || !Array.isArray(data.participants)) return;
+    const key = billFingerprint({ ...entry, data });
+    let group = byKey.get(key);
+    if (!group) {
+      group = { data, entries: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.entries.push(entry);
+  });
+
+  groups.forEach((group) => {
+    const data = group.data;
+    const entry = group.entries[0];
+    const copies = group.entries.length;
     const c = data.event_details.currency;
     const linked = entry.eventId
       ? loadEvents().find((ev) => ev.id === entry.eventId)
@@ -3345,9 +3630,10 @@ function renderHistory() {
     el.innerHTML = `
       <div class="history-item-main">
         <strong>${escapeHtml(data.event_details.title)}</strong>
-        <span>${escapeHtml(data.event_details.date)}</span>
+        <span>${escapeHtml(formatDisplayDate(data.event_details.date) || data.event_details.date)}</span>
         <span class="history-total">${formatMoney(data.receipt_summary.grand_total, c)}</span>
         ${payer ? `<span>Paid first by ${escapeHtml(payer)}</span>` : ""}
+        ${copies > 1 ? `<span class="history-link">Saved ${copies} times</span>` : ""}
         ${linked ? `<span class="history-link">📅 ${escapeHtml(linked.title)}</span>` : ""}
         ${paidRows ? `<div class="history-paid"><span class="history-paid-label">Paid back</span>${paidRows}</div>` : ""}
       </div>
@@ -3361,9 +3647,11 @@ function renderHistory() {
     el.querySelectorAll(".history-check input").forEach((box) => {
       box.addEventListener("change", () => {
         const personName = box.getAttribute("data-name");
-        patchHistory(entry.id, (saved) => {
-          const person = (saved.data.participants || []).find((p) => namesMatch(p.name, personName));
-          if (person) person.repaid = box.checked;
+        group.entries.forEach((savedEntry) => {
+          patchHistory(savedEntry.id, (saved) => {
+            const person = (saved.data.participants || []).find((p) => namesMatch(p.name, personName));
+            if (person) person.repaid = box.checked;
+          });
         });
         box.closest(".history-check")?.classList.toggle("is-paid", box.checked);
       });
@@ -3389,23 +3677,26 @@ function renderHistory() {
 
     el.querySelector(".btn-delete-history").addEventListener("click", async () => {
       const title = data.event_details.title || "this split";
+      const ids = group.entries.map((savedEntry) => savedEntry.id);
+      const idSet = new Set(ids.map(String));
       const event = eventForHistoryEntry(entry);
-      const siblings = event ? getSplitsForEvent(event).filter((s) => String(s.id) !== String(entry.id)) : [];
+      const siblings = event ? getSplitsForEvent(event).filter((s) => !idSet.has(String(s.id))) : [];
+      const copiesNote = copies > 1 ? `all ${copies} copies of ` : "";
       const message = event
         ? siblings.length
-          ? `Delete “${title}” from History? The calendar event stays because other bills are still on it.`
-          : `Delete “${title}” from History and the calendar? This cannot be undone.`
-        : `Delete “${title}”? This cannot be undone.`;
+          ? `Delete ${copiesNote}“${title}” from History? The calendar event stays because other bills are still on it.`
+          : `Delete ${copiesNote}“${title}” from History and the calendar? This cannot be undone.`
+        : `Delete ${copiesNote}“${title}”? This cannot be undone.`;
       if (!window.confirm(message)) return;
       try {
         if (event && !siblings.length) {
-          await deleteHistoryAndCalendar([entry.id], [event.id]);
+          await deleteHistoryAndCalendar(ids, [event.id]);
         } else {
-          await deleteHistoryAndCalendar([entry.id], []);
+          await deleteHistoryAndCalendar(ids, []);
           if (event) {
             const events = loadEvents().map((ev) => {
               if (ev.id !== event.id) return ev;
-              return { ...ev, splitIds: (ev.splitIds || []).filter((id) => String(id) !== String(entry.id)) };
+              return { ...ev, splitIds: (ev.splitIds || []).filter((id) => !idSet.has(String(id))) };
             });
             saveEvents(events);
             const updated = events.find((ev) => ev.id === event.id);
