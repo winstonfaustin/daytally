@@ -2940,8 +2940,11 @@ function renderCalendar() {
       ? billGroups
           .map((group) => {
             const c = group.split.data.event_details.currency;
+            const billTitle = String(group.split.data.event_details.title || "").trim();
+            const sameTitle = billTitle.toLowerCase() === String(event.title || "").trim().toLowerCase();
+            const label = sameTitle ? "" : `<strong>${escapeHtml(billTitle)}</strong> · `;
             const extra = group.count > 1 ? ` · saved ${group.count} times` : "";
-            return `<li class="event-split-line"><span><strong>${escapeHtml(group.split.data.event_details.title)}</strong> · ${formatMoney(group.split.data.receipt_summary.grand_total, c)}${extra}</span><button type="button" class="btn-text btn-view-event-split" data-split-id="${escapeHtml(String(group.split.id))}">View bill</button></li>`;
+            return `<li class="event-split-line"><span>${label}${formatMoney(group.split.data.receipt_summary.grand_total, c)}${extra}</span><button type="button" class="btn-text btn-view-event-split" data-split-id="${escapeHtml(String(group.split.id))}">View bill</button></li>`;
           })
           .join("")
       : "<li class=\"muted\">No bill linked yet</li>";
