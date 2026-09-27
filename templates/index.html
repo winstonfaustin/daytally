@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme42">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=theme46">
 </head>
 <body>
   <div class="page hidden" id="app-shell">
@@ -289,6 +289,18 @@
               <input type="text" id="settle-note" maxlength="200" placeholder="Optional">
             </div>
           </div>
+        </div>
+
+        <div class="settle-pay-card" id="share-with-card">
+          <h3 class="section-title">Share this bill</h3>
+          <p class="panel-desc">Choose an accepted friend. They get this bill in History and on their calendar. The name on the bill can be different.</p>
+          <div class="edit-field">
+            <label for="share-with-friend">Friend</label>
+            <select id="share-with-friend">
+              <option value="">Don't share</option>
+            </select>
+          </div>
+          <p class="field-hint hidden" id="share-with-empty">No accepted friends yet. Add them under Profile.</p>
         </div>
 
         <div class="edit-participants" id="edit-participants"></div>
@@ -579,6 +591,6 @@
     </div>
   </div>
 
-  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme42"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}?v=theme46"></script>
 </body>
 </html>

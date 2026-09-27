@@ -1896,6 +1896,19 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.share-with-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.share-with-option {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
 .settle-friend-row {
   display: grid;
   gap: 0.65rem;

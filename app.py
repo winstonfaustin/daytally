@@ -348,6 +348,22 @@ def get_events():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/splits/<split_id>", methods=["PATCH"])
+def patch_split(split_id):
+    body = request.get_json(silent=True) or {}
+    flags = body.get("repaid")
+    if not isinstance(flags, list):
+        return jsonify({"error": "Missing paid-back updates."}), 400
+    try:
+        user = _require_user()
+        payload = sb.update_split_repaid(user["id"], split_id, flags)
+        return jsonify({"success": True, "data": payload})
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 401
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/splits/<split_id>", methods=["DELETE"])
 def delete_split(split_id):
     try:

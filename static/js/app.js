@@ -10,6 +10,7 @@ const state = {
   gstBase: "food",
   svcPercent: 0,
   selectedPaymentId: "",
+  shareWithTouched: false,
   settleProfiles: [],
   settleFriend: null,
   view: "new",
@@ -251,6 +252,11 @@ function setWizardStep(step, options) {
   stepReview.classList.toggle("hidden", step !== 3);
   stepResults.classList.toggle("hidden", step !== 4);
 
+  if (step === 3) {
+    state.shareWithTouched = false;
+    renderShareTargets();
+    loadFriends({ quiet: true });
+  }
   if (step === 4) showStudyCard(!!(options && options.feedback));
   syncFriendPolling();
 }
@@ -364,8 +370,18 @@ function switchView(view) {
   navCalendar.classList.toggle("active", view === "calendar");
   navChat.classList.toggle("active", view === "chat");
   if (navProfile) navProfile.classList.toggle("active", view === "profile");
-  if (view === "history") renderHistory();
-  if (view === "calendar") renderCalendar();
+  if (view === "history") {
+    renderHistory();
+    refreshCloudData().then(() => {
+      if (state.view === "history") renderHistory();
+    });
+  }
+  if (view === "calendar") {
+    renderCalendar();
+    refreshCloudData().then(() => {
+      if (state.view === "calendar") renderCalendar();
+    });
+  }
   if (view === "chat") ensureChatWelcome();
   if (view === "profile") {
     fillProfileForm();
@@ -1175,7 +1191,12 @@ async function loadFriends(options) {
     const incoming = Array.isArray(payload.friends) ? payload.friends : [];
     const same = JSON.stringify(incoming) === JSON.stringify(state.friends);
     state.friends = incoming;
-    if (quiet && same) return;
+    if (!(quiet && same)) {
+      renderFriends();
+      if (settleSource?.value === "friend") syncSettlePayUI();
+    }
+    if (state.step === 3) renderShareTargets();
+    return;
   } catch (err) {
     if (gen !== friendLoadGen) return;
     if (quiet) return;
@@ -1185,6 +1206,39 @@ async function loadFriends(options) {
   renderFriends();
   if (settleSource?.value === "friend") syncSettlePayUI();
 }
+
+function renderShareTargets() {
+  const select = document.getElementById("share-with-friend");
+  const empty = document.getElementById("share-with-empty");
+  if (!select) return;
+  const accepted = (state.friends || []).filter((friend) => friend.status === "accepted");
+  const current = select.value;
+  const names = (state.draftData?.participants || []).map((person) => person.name);
+  const auto = accepted.find((friend) => names.some((name) => namesMatch(name, friend.name)));
+  select.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Don't share";
+  select.appendChild(none);
+  accepted.forEach((friend) => {
+    const option = document.createElement("option");
+    option.value = friend.id;
+    option.textContent = friend.name || friend.email;
+    select.appendChild(option);
+  });
+  if (state.shareWithTouched && accepted.some((friend) => friend.id === current)) {
+    select.value = current;
+  } else if (!state.shareWithTouched && auto) {
+    select.value = auto.id;
+  } else {
+    select.value = "";
+  }
+  if (empty) empty.classList.toggle("hidden", accepted.length > 0);
+}
+
+document.getElementById("share-with-friend")?.addEventListener("change", () => {
+  state.shareWithTouched = true;
+});
 
 function showFriends(next) {
   friendLoadGen += 1;
@@ -1400,6 +1454,7 @@ function buildEditParticipantCard(data, person, pIdx) {
     data.participants[pIdx].name = newName;
     if (payerWasThis) data.paid_by = newName;
     fillPayerSelect(data);
+    renderShareTargets();
   });
 
   card.querySelector(".edit-tax-share").addEventListener("input", (e) => {
@@ -1548,6 +1603,8 @@ btnConfirm.addEventListener("click", () => {
   state.draftData.event_details.date = editDate.value;
   state.draftData.event_details.currency = editCurrency.value;
   state.draftData.paid_by = editPayer.value;
+  const chosenFriend = document.getElementById("share-with-friend")?.value || "";
+  state.draftData.share_with = chosenFriend ? [chosenFriend] : [];
   const settle = collectSettlePayment();
   if (settle) state.draftData.settle_payment = settle;
   else delete state.draftData.settle_payment;
@@ -1677,6 +1734,7 @@ function renderResults(data) {
             const match = (saved.data.participants || []).find((p) => namesMatch(p.name, person.name));
             if (match) match.repaid = person.repaid;
           });
+          pushRepaid(state.lastHistoryId, state.confirmedData?.participants);
         }
       });
     }
@@ -2443,10 +2501,20 @@ async function refreshCloudData() {
         const existing = byId.get(String(s.id));
         byId.set(String(s.id), existing ? { ...existing, ...row, data } : row);
       });
+      const serverIds = new Set(splitsJson.splits.map((s) => String(s.id)));
+      for (const [id, row] of [...byId.entries()]) {
+        if (row.cloud && !serverIds.has(String(id))) byId.delete(id);
+      }
       saveHistory([...byId.values()]);
     }
     if (eventsRes.ok && Array.isArray(eventsJson.events)) {
-      localStorage.setItem(EVENTS_KEY, JSON.stringify(eventsJson.events));
+      const pending = loadEvents().filter((event) => String(event.id || "").startsWith("evt_"));
+      const merged = [...eventsJson.events];
+      pending.forEach((event) => {
+        const exists = merged.some((item) => item.title === event.title && item.date === event.date);
+        if (!exists) merged.unshift(event);
+      });
+      localStorage.setItem(EVENTS_KEY, JSON.stringify(merged));
     }
     rebuildCalendarLinks();
   } catch {
@@ -2602,6 +2670,7 @@ function rebuildCalendarLinks() {
   let changedE = false;
 
   history.forEach((h) => {
+    if (h.data?.share_role === "member") return;
     const title = (h.data?.event_details?.title || "").trim().toLowerCase();
     const date = normalizeEventDate(h.data?.event_details?.date);
     let event = h.eventId ? events.find((e) => e.id === h.eventId) : null;
@@ -2868,6 +2937,20 @@ function isCloudId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id || ""));
 }
 
+function pushRepaid(splitId, participants) {
+  if (!isCloudId(splitId) || !getSession()?.access_token) return;
+  fetch(`/api/splits/${splitId}`, {
+    method: "PATCH",
+    headers: authHeaders(),
+    body: JSON.stringify({
+      repaid: (participants || []).map((person) => ({
+        name: person.name,
+        repaid: !!person.repaid,
+      })),
+    }),
+  }).catch(() => {});
+}
+
 async function deleteCloudRows(kind, ids) {
   const cloudIds = [...new Set(ids.map(String))].filter(isCloudId);
   if (!cloudIds.length || !getSession()?.access_token) return;
@@ -3039,8 +3122,10 @@ function syncEventToCloud(event) {
           ...new Set([...(all[idx].splitIds || []), ...(j.event.splitIds || []), ...(event.splitIds || [])]),
         ];
         all[idx] = { ...all[idx], ...j.event, splitIds: mergedSplitIds };
-        saveEvents(all);
+      } else {
+        all.unshift({ ...j.event, splitIds: j.event.splitIds || event.splitIds || [] });
       }
+      saveEvents(all);
       remapHistoryEventId(localId, j.event.id);
       rebuildCalendarLinks();
     })
@@ -3636,6 +3721,7 @@ function renderHistory() {
         <span>${escapeHtml(formatDisplayDate(data.event_details.date) || data.event_details.date)}</span>
         <span class="history-total">${formatMoney(data.receipt_summary.grand_total, c)}</span>
         ${payer ? `<span>Paid first by ${escapeHtml(payer)}</span>` : ""}
+        ${data.share_role === "member" ? `<span class="history-link">Shared with you</span>` : ""}
         ${copies > 1 ? `<span class="history-link">Saved ${copies} times</span>` : ""}
         ${linked ? `<span class="history-link">📅 ${escapeHtml(linked.title)}</span>` : ""}
         ${paidRows ? `<div class="history-paid"><span class="history-paid-label">Paid back</span>${paidRows}</div>` : ""}
@@ -3655,6 +3741,11 @@ function renderHistory() {
             const person = (saved.data.participants || []).find((p) => namesMatch(p.name, personName));
             if (person) person.repaid = box.checked;
           });
+          const people = (savedEntry.data?.participants || []).map((person) => ({
+            name: person.name,
+            repaid: namesMatch(person.name, personName) ? box.checked : !!person.repaid,
+          }));
+          pushRepaid(savedEntry.id, people);
         });
         box.closest(".history-check")?.classList.toggle("is-paid", box.checked);
       });
@@ -3685,18 +3776,21 @@ function renderHistory() {
       const event = eventForHistoryEntry(entry);
       const siblings = event ? getSplitsForEvent(event).filter((s) => !idSet.has(String(s.id))) : [];
       const copiesNote = copies > 1 ? `all ${copies} copies of ` : "";
-      const message = event
-        ? siblings.length
-          ? `Delete ${copiesNote}“${title}” from History? The calendar event stays because other bills are still on it.`
-          : `Delete ${copiesNote}“${title}” from History and the calendar? This cannot be undone.`
-        : `Delete ${copiesNote}“${title}”? This cannot be undone.`;
+      const shared = data.share_role === "member";
+      const message = shared
+        ? `Remove “${title}” from your History? Your friend still has the bill.`
+        : event
+          ? siblings.length
+            ? `Delete ${copiesNote}“${title}” from History? The calendar event stays because other bills are still on it.`
+            : `Delete ${copiesNote}“${title}” from History and the calendar? This cannot be undone.`
+          : `Delete ${copiesNote}“${title}”? This cannot be undone.`;
       if (!window.confirm(message)) return;
       try {
-        if (event && !siblings.length) {
+        if (!shared && event && !siblings.length) {
           await deleteHistoryAndCalendar(ids, [event.id]);
         } else {
           await deleteHistoryAndCalendar(ids, []);
-          if (event) {
+          if (event && !shared) {
             const events = loadEvents().map((ev) => {
               if (ev.id !== event.id) return ev;
               return { ...ev, splitIds: (ev.splitIds || []).filter((id) => !idSet.has(String(id))) };

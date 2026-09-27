@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import uuid
 from functools import lru_cache
@@ -412,6 +413,8 @@ def _friend_public(row: dict[str, str], include_payments: bool) -> dict[str, Any
     if include_payments and row["status"] == "accepted":
         try:
             other = get_profile(row["user_id"])
+            if other.get("name"):
+                item["name"] = other["name"]
             item["payment_profiles"] = other.get("payment_profiles") or []
             item["default_payment_id"] = other.get("default_payment_id") or ""
         except Exception:
@@ -648,10 +651,36 @@ def _as_prefs(value: Any) -> dict[str, Any]:
     return {}
 
 
-def save_split(user_id: str, data: dict[str, Any], local_id: str | None = None) -> dict[str, Any]:
-    admin = get_admin_client()
+def _person_key(name: Any) -> str:
+    return str(name or "").strip().lower()
+
+
+def friend_ids_on_bill(
+    friends: list[dict[str, str]],
+    names_by_user_id: dict[str, str],
+    participant_names: list[Any],
+    owner_id: str,
+) -> list[str]:
+    """Accepted friends whose display name matches a person on the bill."""
+    wanted = {_person_key(name) for name in participant_names if _person_key(name)}
+    found: list[str] = []
+    seen: set[str] = set()
+    for row in friends:
+        if row.get("status") != "accepted":
+            continue
+        other_id = str(row.get("user_id") or "")
+        if not other_id or other_id == owner_id or other_id in seen:
+            continue
+        display = names_by_user_id.get(other_id) or row.get("name") or ""
+        if _person_key(display) in wanted:
+            seen.add(other_id)
+            found.append(other_id)
+    return found
+
+
+def _split_row(user_id: str, data: dict[str, Any]) -> dict[str, Any]:
     event = data.get("event_details") or {}
-    row = {
+    return {
         "user_id": user_id,
         "title": event.get("title") or "Bill split",
         "event_date": event.get("date") or "",
@@ -659,16 +688,199 @@ def save_split(user_id: str, data: dict[str, Any], local_id: str | None = None) 
         "paid_by": data.get("paid_by") or "",
         "payload": data,
     }
-    result = admin.table("splits").insert(row).execute()
+
+
+def _load_split_row(split_id: str) -> dict[str, Any] | None:
+    admin = get_admin_client()
+    result = admin.table("splits").select("*").eq("id", split_id).limit(1).execute()
+    rows = result.data or []
+    return rows[0] if rows else None
+
+
+def _matching_friend_ids(user_id: str, data: dict[str, Any]) -> list[str]:
+    participants = data.get("participants") or []
+    names = [
+        person.get("name")
+        for person in participants
+        if isinstance(person, dict)
+    ]
+    _auth_user, prefs, _display_name = _auth_and_prefs(user_id)
+    friends = _normalize_friends(prefs.get("friends"))
+    names_by_user_id: dict[str, str] = {}
+    for row in friends:
+        if row["status"] != "accepted":
+            continue
+        try:
+            names_by_user_id[row["user_id"]] = get_profile(row["user_id"]).get("name") or ""
+        except Exception:
+            names_by_user_id[row["user_id"]] = row.get("name") or ""
+    return friend_ids_on_bill(friends, names_by_user_id, names, user_id)
+
+
+def _share_target_ids(user_id: str, data: dict[str, Any], requested: Any) -> list[str]:
+    if requested is None:
+        return _matching_friend_ids(user_id, data)
+    if not isinstance(requested, list):
+        return []
+    _auth_user, prefs, _display_name = _auth_and_prefs(user_id)
+    friends = _normalize_friends(prefs.get("friends"))
+    requested_ids = {str(item).strip() for item in requested if str(item).strip()}
+    allowed: list[str] = []
+    for row in friends:
+        if row["status"] != "accepted" or row["user_id"] in allowed:
+            continue
+        if row["id"] in requested_ids or row["user_id"] in requested_ids:
+            allowed.append(row["user_id"])
+    return allowed
+
+
+def _delete_share_events(events: Any, only_user_id: str | None = None) -> None:
+    if not isinstance(events, list):
+        return
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        owner = str(item.get("user_id") or "")
+        event_id = str(item.get("event_id") or "")
+        if not owner or not event_id:
+            continue
+        if only_user_id and owner != only_user_id:
+            continue
+        try:
+            delete_event(owner, event_id)
+        except Exception:
+            continue
+
+
+def save_split(user_id: str, data: dict[str, Any], local_id: str | None = None) -> dict[str, Any]:
+    admin = get_admin_client()
+    payload = copy.deepcopy(data)
+    requested = payload.pop("share_with", None)
+    payload.pop("share_copy_ids", None)
+    payload.pop("share_id", None)
+    payload.pop("share_role", None)
+    payload.pop("share_events", None)
+    share_id = str(uuid.uuid4())
+    payload["share_id"] = share_id
+    payload["share_role"] = "owner"
+    payload["share_copy_ids"] = []
+
+    result = admin.table("splits").insert(_split_row(user_id, payload)).execute()
     saved = (result.data or [None])[0]
     if not saved:
         raise ValueError("Could not save split to Supabase.")
+
+    copy_ids = [saved["id"]]
+    share_events: list[dict[str, str]] = []
+    try:
+        friend_ids = _share_target_ids(user_id, payload, requested)
+    except Exception:
+        friend_ids = []
+    event_details = payload.get("event_details") or {}
+    for friend_id in friend_ids:
+        friend_payload = copy.deepcopy(payload)
+        friend_payload["share_role"] = "member"
+        try:
+            inserted = admin.table("splits").insert(_split_row(friend_id, friend_payload)).execute()
+            friend_row = (inserted.data or [None])[0]
+            if not friend_row:
+                continue
+            copy_ids.append(friend_row["id"])
+            saved_event = save_event(
+                friend_id,
+                {
+                    "title": event_details.get("title") or "Bill split",
+                    "date": event_details.get("date") or "",
+                    "notes": "",
+                    "splitIds": [friend_row["id"]],
+                },
+            )
+            share_events.append(
+                {
+                    "user_id": friend_id,
+                    "event_id": saved_event["id"],
+                    "split_id": friend_row["id"],
+                }
+            )
+        except Exception:
+            continue
+
+    if len(copy_ids) > 1:
+        payload["share_copy_ids"] = copy_ids
+        payload["share_events"] = share_events
+        try:
+            admin.table("splits").update({"payload": payload}).eq("id", saved["id"]).execute()
+            for friend_split_id in copy_ids[1:]:
+                friend_payload = copy.deepcopy(payload)
+                friend_payload["share_role"] = "member"
+                friend_payload["share_copy_ids"] = copy_ids
+                friend_payload["share_events"] = share_events
+                admin.table("splits").update({"payload": friend_payload}).eq("id", friend_split_id).execute()
+        except Exception:
+            payload["share_copy_ids"] = []
+            payload["share_events"] = []
+
     return {
         "id": saved["id"],
         "local_id": local_id,
         "savedAt": saved.get("created_at"),
-        "data": data,
+        "data": payload,
     }
+
+
+def update_split_repaid(user_id: str, split_id: str, flags: list[Any]) -> dict[str, Any]:
+    admin = get_admin_client()
+    result = (
+        admin.table("splits")
+        .select("*")
+        .eq("id", split_id)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    row = (result.data or [None])[0]
+    if not row:
+        raise PermissionError("That bill is not on this account.")
+    payload = _as_prefs(row.get("payload"))
+    share_id = str(payload.get("share_id") or "")
+    by_name = {}
+    for item in flags:
+        if not isinstance(item, dict):
+            continue
+        key = _person_key(item.get("name"))
+        if key:
+            by_name[key] = bool(item.get("repaid"))
+
+    def apply_flags(body: dict[str, Any]) -> dict[str, Any]:
+        updated = copy.deepcopy(body)
+        people = []
+        for person in updated.get("participants") or []:
+            if not isinstance(person, dict):
+                continue
+            key = _person_key(person.get("name"))
+            if key in by_name:
+                person = {**person, "repaid": by_name[key]}
+            people.append(person)
+        updated["participants"] = people
+        return updated
+
+    targets = [split_id]
+    for copy_id in payload.get("share_copy_ids") or []:
+        if copy_id and copy_id not in targets:
+            targets.append(copy_id)
+    saved_payload = apply_flags(payload)
+    for target_id in targets:
+        current = row if target_id == split_id else _load_split_row(str(target_id))
+        if not current:
+            continue
+        current_payload = _as_prefs(current.get("payload"))
+        if share_id and str(current_payload.get("share_id") or "") != share_id:
+            continue
+        next_payload = apply_flags(current_payload)
+        admin.table("splits").update({"payload": next_payload}).eq("id", target_id).execute()
+        if target_id == split_id:
+            saved_payload = next_payload
+    return saved_payload
 
 
 def list_splits(user_id: str) -> list[dict[str, Any]]:
@@ -731,13 +943,36 @@ def save_event(user_id: str, event: dict[str, Any]) -> dict[str, Any]:
 
 def delete_split(user_id: str, split_id: str) -> None:
     admin = get_admin_client()
-    (
+    result = (
         admin.table("splits")
-        .delete()
+        .select("*")
         .eq("id", split_id)
         .eq("user_id", user_id)
+        .limit(1)
         .execute()
     )
+    row = (result.data or [None])[0]
+    if not row:
+        return
+    payload = _as_prefs(row.get("payload"))
+    if str(payload.get("share_role") or "") == "member":
+        _delete_share_events(payload.get("share_events"), only_user_id=user_id)
+        admin.table("splits").delete().eq("id", split_id).eq("user_id", user_id).execute()
+        return
+    _delete_share_events(payload.get("share_events"))
+    share_id = str(payload.get("share_id") or "")
+    targets = [split_id]
+    for copy_id in payload.get("share_copy_ids") or []:
+        if copy_id and copy_id not in targets:
+            targets.append(copy_id)
+    for target_id in targets:
+        current = row if target_id == split_id else _load_split_row(str(target_id))
+        if not current:
+            continue
+        current_payload = _as_prefs(current.get("payload"))
+        if share_id and str(current_payload.get("share_id") or "") != share_id:
+            continue
+        admin.table("splits").delete().eq("id", target_id).execute()
 
 
 def delete_event(user_id: str, event_id: str) -> None:
